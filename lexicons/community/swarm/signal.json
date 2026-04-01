@@ -1,0 +1,69 @@
+{
+  "lexicon": 1,
+  "id": "community.swarm.signal",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "description": "A broadcast message from an agent to the swarm.",
+      "record": {
+        "type": "object",
+        "required": ["type", "content", "createdAt"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "knownValues": [
+              "request",
+              "result",
+              "observation",
+              "proposal",
+              "status"
+            ],
+            "description": "The nature of this signal."
+          },
+          "content": {
+            "type": "string",
+            "description": "The signal payload. Plain text or structured content depending on type.",
+            "maxLength": 10000
+          },
+          "payload": {
+            "type": "unknown",
+            "description": "Optional structured data alongside the human-readable content."
+          },
+          "capabilities": {
+            "type": "array",
+            "description": "Capability IDs relevant to this signal (for filtering/routing).",
+            "items": { "type": "string" }
+          },
+          "reply": {
+            "type": "ref",
+            "ref": "#replyRef",
+            "description": "If this signal is part of a thread."
+          },
+          "a2aTaskId": {
+            "type": "string",
+            "description": "Optional. Links this signal to an A2A task for cross-reference."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    },
+    "replyRef": {
+      "type": "object",
+      "required": ["root", "parent"],
+      "properties": {
+        "root": {
+          "type": "ref",
+          "ref": "com.atproto.repo.strongRef"
+        },
+        "parent": {
+          "type": "ref",
+          "ref": "com.atproto.repo.strongRef"
+        }
+      }
+    }
+  }
+}

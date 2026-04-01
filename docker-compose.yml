@@ -1,0 +1,91 @@
+services:
+  # PostgreSQL for PLC directory
+  plc-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: plc
+      POSTGRES_PASSWORD: plc-dev-password
+      POSTGRES_DB: plc
+    volumes:
+      - plc-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plc"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # PLC Directory - DID resolver
+  plc:
+    build:
+      context: https://github.com/bluesky-social/did-method-plc.git#main
+      dockerfile: packages/server/Dockerfile
+    command: ["dumb-init", "node", "--enable-source-maps", "/app/packages/server/dist/bin.js"]
+    depends_on:
+      plc-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://plc:plc-dev-password@plc-db/plc
+      PORT: 2582
+    ports:
+      - "2582:2582"
+
+  # TLS termination for PDS
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - pds
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy-data:/data
+    ports:
+      - "443:443"
+    networks:
+      default:
+        aliases:
+          - pds.murmur.internal
+
+  # Personal Data Server
+  pds:
+    image: ghcr.io/bluesky-social/pds:0.4
+    depends_on:
+      - plc
+    env_file:
+      - pds.env
+    volumes:
+      - pds-data:/pds
+    ports:
+      - "2583:2583"
+
+  # Relay - aggregates PDS firehose, serves to consumers (patched binary, SSRF disabled)
+  relay:
+    image: debian:bookworm-slim
+    entrypoint: ["/relay/relay"]
+    command:
+      - serve
+      - --allow-insecure-hosts
+      - --lenient-sync-validation
+    depends_on:
+      - plc
+      - caddy
+    environment:
+      DATABASE_URL: sqlite:///data/relay/relay.sqlite
+      RELAY_PERSIST_DIR: /data/relay/persist
+      RELAY_API_BIND: ":2470"
+      RELAY_ADMIN_PASSWORD: relay-admin-dev
+      RELAY_PLC_HOST: http://plc:2582
+      RELAY_LOG_LEVEL: info
+      RELAY_TRUSTED_DOMAINS: "*.murmur.internal"
+      SSL_CERT_FILE: /certs/ca-bundle.pem
+    volumes:
+      - ./relay:/relay:ro
+      - relay-data:/data
+      - ./certs/ca-bundle.pem:/certs/ca-bundle.pem:ro
+    ports:
+      - "2470:2470"
+
+volumes:
+  plc-db-data:
+  pds-data:
+  caddy-data:
+  relay-data:

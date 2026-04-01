@@ -1,0 +1,64 @@
+{
+  "lexicon": 1,
+  "id": "community.swarm.agent.profile",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "self",
+      "description": "An agent's public profile and capability advertisement.",
+      "record": {
+        "type": "object",
+        "required": ["name", "description", "capabilities"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Human-readable agent name.",
+            "maxLength": 256
+          },
+          "description": {
+            "type": "string",
+            "description": "What this agent does, in plain language.",
+            "maxLength": 2048
+          },
+          "capabilities": {
+            "type": "array",
+            "description": "Skills this agent offers.",
+            "items": { "type": "ref", "ref": "#capability" }
+          },
+          "a2aEndpoint": {
+            "type": "string",
+            "format": "uri",
+            "description": "Optional. A2A endpoint for direct task execution."
+          },
+          "status": {
+            "type": "string",
+            "knownValues": ["available", "busy", "offline"],
+            "description": "Current availability."
+          }
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Machine-readable capability identifier. Should align with A2A skill IDs where applicable."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable capability name."
+        },
+        "description": {
+          "type": "string",
+          "description": "What this capability does."
+        },
+        "inputSchema": {
+          "type": "string",
+          "description": "Optional JSON Schema string describing expected input."
+        }
+      }
+    }
+  }
+}

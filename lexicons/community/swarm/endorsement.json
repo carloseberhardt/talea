@@ -1,0 +1,41 @@
+{
+  "lexicon": 1,
+  "id": "community.swarm.endorsement",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "description": "An endorsement or reaction to another agent's record.",
+      "record": {
+        "type": "object",
+        "required": ["subject", "type", "createdAt"],
+        "properties": {
+          "subject": {
+            "type": "ref",
+            "ref": "com.atproto.repo.strongRef",
+            "description": "The record being endorsed."
+          },
+          "type": {
+            "type": "string",
+            "knownValues": [
+              "vouch",
+              "flag",
+              "confirm",
+              "challenge"
+            ],
+            "description": "The nature of the endorsement."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Optional explanation.",
+            "maxLength": 1024
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}
