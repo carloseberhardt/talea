@@ -51,11 +51,10 @@ func main() {
 
 	registry := NewAgentRegistry(logger)
 
-	// Seed registry with the delivery agent for testing.
-	// In the future, this will be populated dynamically from agent.profile records on the firehose.
+	// Seed registry with an agent for testing (optional, will be replaced by firehose discovery).
 	if endpoint := os.Getenv("SEED_AGENT_ENDPOINT"); endpoint != "" {
 		tags := strings.Split(envOrDefault("SEED_AGENT_TAGS", "delivery,tracking,packages"), ",")
-		registry.Register(RegisteredAgent{
+		registry.Upsert(RegisteredAgent{
 			Name:        envOrDefault("SEED_AGENT_NAME", "delivery-agent"),
 			A2AEndpoint: endpoint,
 			Tags:        tags,
@@ -83,7 +82,7 @@ func main() {
 		"relay", relayURL,
 		"pds", pdsURL,
 		"did", b.bridgeDID,
-		"registered_agents", len(registry.agents),
+		"registered_agents", len(registry.All()),
 	)
 
 	if err := b.consumeFirehose(ctx); err != nil && ctx.Err() == nil {
@@ -278,12 +277,13 @@ func (b *Bridge) handleAgentProfile(ctx context.Context, did string, record map[
 		return
 	}
 
-	var tags []string
+	// Extract capability tags from the atproto profile
+	var profileTags []string
 	if caps, ok := record["capabilities"].([]any); ok {
 		for _, c := range caps {
 			if capMap, ok := c.(map[string]any); ok {
 				if id, ok := capMap["id"].(string); ok {
-					tags = append(tags, id)
+					profileTags = append(profileTags, id)
 				}
 			}
 		}
@@ -293,15 +293,88 @@ func (b *Bridge) handleAgentProfile(ctx context.Context, did string, record map[
 		"did", did,
 		"name", name,
 		"endpoint", endpoint,
-		"tags", tags,
+		"profile_tags", profileTags,
 	)
 
-	b.registry.Register(RegisteredAgent{
+	// Fetch the A2A agent card to get the full skill/tag list
+	cardTags := b.fetchAgentCardTags(ctx, endpoint)
+
+	// Merge: profile tags + agent card tags, deduplicated
+	tags := mergeTags(profileTags, cardTags)
+
+	b.logger.Info("agent tags resolved",
+		"did", did,
+		"name", name,
+		"profile_tags", profileTags,
+		"card_tags", cardTags,
+		"merged_tags", tags,
+	)
+
+	b.registry.Upsert(RegisteredAgent{
 		DID:         did,
 		Name:        name,
 		A2AEndpoint: endpoint,
 		Tags:        tags,
 	})
+}
+
+// fetchAgentCardTags fetches the agent's A2A card and extracts skill tags.
+func (b *Bridge) fetchAgentCardTags(ctx context.Context, endpoint string) []string {
+	cardURL := endpoint + "/.well-known/agent.json"
+
+	req, err := http.NewRequestWithContext(ctx, "GET", cardURL, nil)
+	if err != nil {
+		b.logger.Warn("failed to build agent card request", "url", cardURL, "error", err)
+		return nil
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		b.logger.Warn("failed to fetch agent card", "url", cardURL, "error", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b.logger.Warn("agent card fetch failed", "url", cardURL, "status", resp.StatusCode)
+		return nil
+	}
+
+	var card struct {
+		Skills []struct {
+			Tags []string `json:"tags"`
+		} `json:"skills"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
+		b.logger.Warn("failed to decode agent card", "url", cardURL, "error", err)
+		return nil
+	}
+
+	var tags []string
+	for _, skill := range card.Skills {
+		tags = append(tags, skill.Tags...)
+	}
+	return tags
+}
+
+func mergeTags(a, b []string) []string {
+	seen := make(map[string]bool)
+	var merged []string
+	for _, t := range a {
+		lower := strings.ToLower(t)
+		if !seen[lower] {
+			seen[lower] = true
+			merged = append(merged, t)
+		}
+	}
+	for _, t := range b {
+		lower := strings.ToLower(t)
+		if !seen[lower] {
+			seen[lower] = true
+			merged = append(merged, t)
+		}
+	}
+	return merged
 }
 
 // --- PDS interaction: publish reply signals ---

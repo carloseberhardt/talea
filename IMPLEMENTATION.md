@@ -4,100 +4,87 @@ This is the working implementation plan. It reflects what we've actually built a
 
 ## Current State
 
-**Phase 1 is complete.** We have a working self-hosted atproto stack with custom lexicon records.
+**Phase 1 and Phase 2 (core loop) are complete.** We have a working end-to-end atproto ↔ A2A bridge: Carlos posts a signal, the bridge routes it to an A2A agent, the agent responds, and the result is published back as a threaded reply — all without the agent knowing atproto exists.
 
 ### What's Running
 
 - **PLC directory** — built from `bluesky-social/did-method-plc` source, using the dev entry point (`dist/bin.js`, not the production `service/index.js` which expects `DB_CREDS_JSON`)
 - **PostgreSQL** — backs the PLC directory
-- **PDS** — official `ghcr.io/bluesky-social/pds:0.4` image, running in dev mode (`PDS_DEV_MODE=true`)
-- Ports: PLC on 2582, PDS on 2583
+- **PDS** — official `ghcr.io/bluesky-social/pds:0.4` image, dev mode, behind Caddy for TLS
+- **Caddy** — TLS termination with mkcert certs for `pds.murmur.internal`
+- **Relay** — built from `bluesky-social/indigo` source with SSRF check disabled for local sandbox. Uses SQLite, watches our PDS via the admin `requestCrawl` API.
+- **Bridge** — Go service consuming the relay firehose, dispatching A2A tasks, publishing results back as threaded reply signals
+- Ports: PLC on 2582, PDS on 2583 (HTTPS on 443 via Caddy), Relay on 2470
 
 ### What We've Proven
 
-- Custom lexicon records (`community.swarm.agent.profile`, `community.swarm.signal`) work with `validate: false` — the PDS is lexicon-agnostic and stores whatever you give it
-- Threaded signals work: a reply referencing a root signal via `strongRef` (URI + CID) creates a proper thread structure
-- Agent profiles with capability arrays store and retrieve cleanly
-- Account creation uses `goat` CLI inside the PDS container (the HTTP admin auth endpoint doesn't work the way you'd expect)
-- Handle domain must be `.test` in dev mode — `.localhost` is rejected as an invalid TLD
+- **The core thesis works.** An A2A agent (Python delivery-tracking agent) participated in the swarm without any knowledge of atproto. It received a task via standard A2A `SendMessage` and returned a result. The bridge handled all atproto interaction.
+- Custom lexicon records (`community.swarm.agent.profile`, `community.swarm.signal`) work with `validate: false`
+- Threaded signals work: reply references via `strongRef` (URI + CID)
+- The firehose delivers full record content (not just references) — the bridge can route on capability tags without extra fetches
+- Agent profiles on the firehose can trigger dynamic registration in the bridge's agent registry
+- The bridge's self-dedup (skip own DID) prevents firehose loops
+- A2A protocol recently moved to 1.0 spec with PascalCase method names (`SendMessage` not `message/send`). Go SDK (`a2a-go/v2`) is current. Python SDK `a2a-sdk` 1.0.0a0 aligns; older 0.3.x uses the old names.
 
 ### Accounts
 
 | Handle | DID | Role |
 |---|---|---|
-| carlos.test | did:plc:4cgb4hlsybrusqsbv3p3vccz | Human |
-| agent-one.test | did:plc:idsuw4pid2shhvpqnroznjtm | Agent |
+| carlos.test | (regenerated after hostname change) | Human |
+| agent-one.test | (regenerated) | Agent |
+| bridge.test | (new) | Bridge infrastructure |
+
+### Infrastructure Decisions Made
+
+1. **PDS hostname is `pds.murmur.internal`** — Docker network alias + `/etc/hosts` entry. Required because DID documents bake in the PDS URL at account creation, and the relay needs to reach the PDS from inside Docker.
+2. **Caddy for TLS** — mkcert local CA. The relay's SSRF protection and OAuth/client libraries are happier with real HTTPS. `mkcert -install` trusts the CA system-wide.
+3. **Relay built from source** — The official Indigo relay has hardcoded SSRF protection that blocks connections to private IPs. We patched `util/ssrf/ssrf.go` to disable `PublicOnlyControl` for the sandbox. This is a one-line change in the Go source.
+4. **Bridge dispatches directly to agents** — not through AgentGateway for now. AgentGateway has a REST admin API (`GET/POST /config` on port 15000) that supports runtime config updates without restart, but it's full-config replacement, not fine-grained CRUD. For the sandbox, the bridge maintains its own agent registry and calls A2A endpoints directly.
+5. **Full results in reply signals** — the bridge publishes complete A2A results back to atproto threads, not just metadata. Network-level trust model for the sandbox (see design doc security section).
 
 ### Lessons Learned
 
 1. **PDS env changes require `docker compose up -d --force-recreate pds`**, not just `restart`. Restart doesn't reload env files.
-2. **The PLC Dockerfile's default entrypoint is production-only.** It expects `DB_CREDS_JSON` (a JSON blob of database credentials). The dev entry point at `dist/bin.js` reads `DATABASE_URL` like a normal app. We override the command in docker-compose.
-3. **`createRecord` with a fixed `rkey` (like `"self"` for profiles) is not idempotent.** Second call fails. Use `putRecord` for records that should be upserted.
-4. **Lexicon validation is opt-in.** The PDS doesn't know our custom lexicons, so `validate: false` is required. Records get `validationStatus: "unknown"` which is fine.
-5. **No published `:latest` tag for the PLC directory image.** Build from source is the stable path.
+2. **The PLC Dockerfile's default entrypoint is production-only.** Override the command to use `dist/bin.js`.
+3. **`createRecord` with a fixed `rkey` (like `"self"` for profiles) is not idempotent.** Use `putRecord` for upserts.
+4. **Lexicon validation is opt-in.** `validate: false` required for custom lexicons.
+5. **No published `:latest` tag for the PLC directory image.** Build from source.
+6. **Handle domain must be `.test` in PDS dev mode.** `.localhost` rejected as invalid TLD.
+7. **The relay validates hostnames strictly.** Bare service names (`pds`) and `host:port` formats are rejected. Needs a proper domain name. `trusted-domains` only affects account limits, not SSRF bypass.
+8. **DID documents bake in the PDS URL at account creation.** Changing `PDS_HOSTNAME` requires wiping volumes and recreating accounts.
+9. **The A2A ecosystem is in flux.** The spec recently moved to PascalCase method names (1.0). Python SDK 0.3.x and Go SDK 2.x disagree on method names. Agents need to be on matching SDK versions.
 
 ---
 
-## Phase 2: The Relay, Bridge, and Reactive Loop
+## Phase 3: Dynamic Agent Discovery and AgentGateway Integration
 
-**Goal:** Prove the core value proposition — an A2A agent participates in the swarm without knowing atproto exists.
+**Goal:** Agents join the swarm dynamically — no bridge restarts, no config file changes.
 
-This is the point of Murmur. An agent that already speaks A2A should be able to join the swarm by registering with AgentGateway. The relay + bridge handles everything else: watching the firehose, routing signals to agents, publishing results back. The agent never touches atproto.
+### What Needs to Happen
 
-If we skip the relay or have agents subscribe to the firehose directly, we've broken the thesis. That's just "agents that speak atproto" — which is exactly what we're trying to avoid. The relay and bridge are not infrastructure overhead; they're the product.
+Right now the bridge seeds agents via env vars (`SEED_AGENT_*`). This was fine for proving the loop, but breaks the dynamic registration story. An agent should be able to join by having its `community.swarm.agent.profile` published to the PDS (by anyone — the agent itself, an admin, a provisioning script).
 
-### Infrastructure Adds
+The bridge already watches for `community.swarm.agent.profile` records on the firehose and registers them in its in-memory registry. What's missing:
 
-Add to docker-compose:
-- **Relay** — subscribes to the PDS, serves the firehose. Research needed: `indigo` BGS (Go, full-featured), `jetstream` (lighter), or another option. Pick the simplest that watches a single PDS and serves a websocket firehose.
-- **AgentGateway** — A2A routing and agent management
-- **Bridge service** (we build this) — the App View that connects atproto ↔ AgentGateway
-- **1-2 simple A2A agents** — registered with AgentGateway, know nothing about atproto
+1. **AgentGateway integration.** When the bridge discovers a new agent, it should register a route in AgentGateway via the admin API (`POST /config`). This gives us AgentGateway's observability, LLM proxy, and any future policy features in the dispatch path.
 
-### Prerequisites / Research (do before building)
+2. **Agent card discovery.** The bridge should fetch the agent's A2A agent card from its `a2aEndpoint` to get the full skill/capability list, rather than relying only on what's in the atproto profile. The profile is the announcement; the agent card is the source of truth.
 
-1. **Relay selection.** What's the simplest relay for a single-PDS sandbox? We need: subscribe to PDS, serve firehose websocket, run in Docker. That's it.
-2. **AgentGateway control plane API.** Does it support programmatic agent registration? This is the key integration point. If not, we build a workaround or fork.
-3. **A2A agent framework.** What's the simplest way to stand up an A2A-compliant agent? Python SDK? Raw HTTP?
-4. **Firehose event format.** CBOR-encoded — what libraries exist for decoding in the bridge's language?
-5. **Bridge identity.** The bridge needs its own PDS account and DID. Create it alongside the existing accounts.
+3. **Persistence.** The bridge's agent registry is in-memory — it's lost on restart. Either persist to disk/DB, or replay the firehose from a cursor on startup to rebuild state.
 
-### Work
-
-1. **Stand up AgentGateway** with 1-2 simple A2A agents (e.g., a stock-price agent). Verify basic A2A task dispatch works independently of atproto — post a task directly to AgentGateway, agent responds.
-
-2. **Stand up the relay.** Configure it to watch our PDS. Verify the firehose websocket serves events when records are created on the PDS.
-
-3. **Build the bridge service.** This is the core new code — the thing that makes Murmur work:
-   - Subscribes to the relay's firehose
-   - Indexes `community.swarm.signal` records
-   - **Fast path:** tagged signals → match capabilities against AgentGateway's registered agents → dispatch A2A task → publish result as reply signal in the originating thread
-   - **Self-dedup:** skip signals from the bridge's own DID (avoid the firehose loop noted in the design doc)
-   - Publishes as its own identity (its own DID on every record)
-
-4. **Test the fast path end-to-end.** Carlos posts a tagged signal via curl → bridge sees it on the firehose → routes to agent via AgentGateway → agent returns A2A result → bridge publishes reply in thread. The agent never knew atproto was involved.
-
-5. **Dynamic agent registration.** When a new `community.swarm.agent.profile` appears on the firehose with an `a2aEndpoint`, the bridge registers it with AgentGateway automatically. If AgentGateway's API doesn't support this, document the gap and work around it.
-
-6. **Measure latency.** Time from signal creation to agent reply appearing in the repo. This tells us whether the relay → bridge → AgentGateway → agent → bridge → PDS round trip is fast enough for interactive use.
+4. **Deduplication.** Multiple profile updates for the same agent shouldn't create duplicate registry entries. Handle updates and deletes, not just creates.
 
 ### What We'll Discover
 
-- Whether the bridge architecture holds up under real use
-- AgentGateway's actual capabilities and limitations
-- Firehose latency characteristics through the full routing stack
-- Whether capability tag matching is sufficient for routing without NLP
-- Whether the "agents don't know about atproto" promise actually holds
+- Whether the AgentGateway full-config-replacement API is workable for dynamic registration (race conditions with concurrent registrations?)
+- Whether the atproto profile + A2A agent card alignment works in practice
+- How to handle agents going offline (profile deleted? status field? TTL?)
 
 ---
 
 ## Phase 4: Human Interaction and the Slow Path
 
 **Goal:** Humans post natural language signals without capability tags, and the system figures out where to route them.
-
-### Infrastructure Adds
-
-- **Triage agent/function** — an LLM-backed classifier that reads untagged signals and adds capability tags
 
 ### Work
 
@@ -111,7 +98,7 @@ Add to docker-compose:
 
 3. **Multi-agent scenarios.** Post signals that match multiple agents. Observe how the "dispatch to all" v0 strategy works in practice. Multiple agents respond in-thread — does the conversation make sense?
 
-4. **Stress test.** Post a batch of signals and observe how the system handles concurrent routing, multiple agent responses, and thread growth.
+4. **Mentions as direct dispatch.** `@agent-name.test` in a signal should route directly to that agent, bypassing capability matching. The bridge resolves the handle to a DID and dispatches.
 
 ### What We'll Discover
 
@@ -152,5 +139,6 @@ These are real concerns but don't have phases assigned. They emerge from usage:
 - **Quality/trust scoring via labelers** — when there's enough interaction data
 - **Custom dashboard UI (A2UI)** — when the API is stable and we want richer human interaction
 - **Bridge redundancy** — multiple bridge instances with claim-before-dispatch dedup (see design doc)
-- **Private communication patterns** — encrypted records or private channels for sensitive coordination
+- **Private communication patterns** — DMs as human-to-agent private channel, encrypted records, or separate access-controlled channels for sensitive coordination
 - **Retention/archival** — when repo growth from signal threads becomes a concern
+- **Async A2A support** — push notification callbacks in the bridge for long-running agent tasks (the delivery agent's async flow exposed this gap)
