@@ -34,6 +34,7 @@ type Bridge struct {
 	pdsURL   string
 	bridgeDID string
 	registry *AgentRegistry
+	gateway  *GatewayClient
 
 	// PDS auth
 	accessToken string
@@ -48,24 +49,18 @@ func main() {
 	pdsURL := envOrDefault("PDS_URL", "https://pds.murmur.internal")
 	bridgeHandle := envOrDefault("BRIDGE_HANDLE", "bridge.test")
 	bridgePassword := envOrDefault("BRIDGE_PASSWORD", "bridge-sandbox-pass")
+	gatewayAdminURL := envOrDefault("GATEWAY_ADMIN_URL", "http://localhost:15000")
+	gatewayURL := envOrDefault("GATEWAY_URL", "http://localhost:3000")
 
 	registry := NewAgentRegistry(logger)
-
-	// Seed registry with an agent for testing (optional, will be replaced by firehose discovery).
-	if endpoint := os.Getenv("SEED_AGENT_ENDPOINT"); endpoint != "" {
-		tags := strings.Split(envOrDefault("SEED_AGENT_TAGS", "delivery,tracking,packages"), ",")
-		registry.Upsert(RegisteredAgent{
-			Name:        envOrDefault("SEED_AGENT_NAME", "delivery-agent"),
-			A2AEndpoint: endpoint,
-			Tags:        tags,
-		})
-	}
+	gateway := NewGatewayClient(gatewayAdminURL, gatewayURL, logger)
 
 	b := &Bridge{
 		logger:   logger,
 		relayURL: relayURL,
 		pdsURL:   pdsURL,
 		registry: registry,
+		gateway:  gateway,
 		handle:   bridgeHandle,
 		password: bridgePassword,
 	}
@@ -235,13 +230,20 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 
 	// Dispatch to all matching agents (v0 strategy: let them all respond)
 	for _, agent := range agents {
+		// Dispatch through AgentGateway if the agent has a handle (registered route)
+		dispatchURL := agent.A2AEndpoint
+		if agent.Handle != "" {
+			dispatchURL = b.gateway.DispatchURL(agent.Handle)
+		}
+
 		b.logger.Info("dispatching to agent",
 			"agent", agent.Name,
-			"endpoint", agent.A2AEndpoint,
+			"handle", agent.Handle,
+			"dispatch_url", dispatchURL,
 			"signal_uri", uri,
 		)
 
-		result, err := sendA2ATask(ctx, agent.A2AEndpoint, content)
+		result, err := sendA2ATask(ctx, dispatchURL, content)
 		if err != nil {
 			b.logger.Error("A2A dispatch failed",
 				"agent", agent.Name,
@@ -310,12 +312,27 @@ func (b *Bridge) handleAgentProfile(ctx context.Context, did string, record map[
 		"merged_tags", tags,
 	)
 
+	// Resolve the handle for this DID (used as the gateway route prefix)
+	handle := b.resolveHandle(ctx, did)
+
 	b.registry.Upsert(RegisteredAgent{
 		DID:         did,
 		Name:        name,
+		Handle:      handle,
 		A2AEndpoint: endpoint,
 		Tags:        tags,
 	})
+
+	// Register a route in AgentGateway so dispatch goes through the gateway
+	if handle != "" {
+		if err := b.gateway.RegisterAgent(handle, endpoint); err != nil {
+			b.logger.Error("failed to register agent with gateway",
+				"handle", handle,
+				"endpoint", endpoint,
+				"error", err,
+			)
+		}
+	}
 }
 
 // fetchAgentCardTags fetches the agent's A2A card and extracts skill tags.
@@ -443,6 +460,40 @@ func (b *Bridge) publishReplySignal(ctx context.Context, rootURI string, rootCID
 		"agent", agentName,
 	)
 	return nil
+}
+
+// --- Handle resolution ---
+
+// resolveHandle resolves a DID to its atproto handle via the PDS.
+func (b *Bridge) resolveHandle(ctx context.Context, did string) string {
+	url := fmt.Sprintf("%s/xrpc/com.atproto.repo.describeRepo?repo=%s", b.pdsURL, did)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		b.logger.Warn("failed to build handle resolution request", "did", did, "error", err)
+		return ""
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		b.logger.Warn("failed to resolve handle", "did", did, "error", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b.logger.Warn("handle resolution failed", "did", did, "status", resp.StatusCode)
+		return ""
+	}
+
+	var result struct {
+		Handle string `json:"handle"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		b.logger.Warn("failed to decode handle resolution", "did", did, "error", err)
+		return ""
+	}
+
+	return result.Handle
 }
 
 // --- Auth ---

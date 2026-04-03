@@ -84,6 +84,18 @@ services:
     ports:
       - "2470:2470"
 
+  # AgentGateway — A2A routing, policies, observability
+  agentgateway:
+    build: ./agentgateway
+    ports:
+      - "3000:3000"     # A2A listener
+      - "15000:15000"   # Admin UI + API
+    command: ["-f", "/config.yaml"]
+    environment:
+      ADMIN_ADDR: "0.0.0.0:15000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
 volumes:
   plc-db-data:
   pds-data:

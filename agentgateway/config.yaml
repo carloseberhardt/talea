@@ -1,0 +1,6 @@
+binds:
+- port: 3000
+  listeners:
+  - protocol: HTTP
+    name: a2a
+    routes: []
