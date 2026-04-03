@@ -337,7 +337,7 @@ func (b *Bridge) handleAgentProfile(ctx context.Context, did string, record map[
 
 // fetchAgentCardTags fetches the agent's A2A card and extracts skill tags.
 func (b *Bridge) fetchAgentCardTags(ctx context.Context, endpoint string) []string {
-	cardURL := endpoint + "/.well-known/agent.json"
+	cardURL := endpoint + "/.well-known/agent-card.json"
 
 	req, err := http.NewRequestWithContext(ctx, "GET", cardURL, nil)
 	if err != nil {
