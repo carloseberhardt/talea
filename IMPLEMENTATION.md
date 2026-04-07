@@ -39,7 +39,7 @@ This is the working implementation plan. It reflects what we've actually built a
 1. **PDS hostname is `pds.murmur.internal`** — Docker network alias + `/etc/hosts` entry. Required because DID documents bake in the PDS URL at account creation, and the relay needs to reach the PDS from inside Docker.
 2. **Caddy for TLS** — mkcert local CA. The relay's SSRF protection and OAuth/client libraries are happier with real HTTPS. `mkcert -install` trusts the CA system-wide.
 3. **Relay built from source** — The official Indigo relay has hardcoded SSRF protection that blocks connections to private IPs. We patched `util/ssrf/ssrf.go` to disable `PublicOnlyControl` for the sandbox. This is a one-line change in the Go source.
-4. **Bridge dispatches directly to agents** — not through AgentGateway for now. AgentGateway has a REST admin API (`GET/POST /config` on port 15000) that supports runtime config updates without restart, but it's full-config replacement, not fine-grained CRUD. For the sandbox, the bridge maintains its own agent registry and calls A2A endpoints directly.
+4. **Bridge dispatches directly to agents** — not through AgentGateway. AgentGateway integration was built and proven in commit `26d86e1` (its admin API on port 15000 supports runtime config updates via full-config replacement, not fine-grained CRUD), then removed from the dispatch path. The reason: putting the gateway in the dispatch path created a second registry — agent profiles in atproto repos *and* routes in AgentGateway — and made the bridge responsible for keeping the two in sync. Reconciliation would have made the bridge a worse SPOF without buying us anything the sandbox actually needs yet. The bridge now reads agent profiles from the firehose, keeps an in-memory registry, and dispatches directly to each agent's `a2aEndpoint`. AgentGateway can come back when we have a concrete need (observability of A2A traffic, policy enforcement, LLM proxy) that the bridge alone can't satisfy. The dispatch destination is a single per-call decision, so swapping it for a gateway URL later is a small change.
 5. **Full results in reply signals** — the bridge publishes complete A2A results back to atproto threads, not just metadata. Network-level trust model for the sandbox (see design doc security section).
 
 ### Lessons Learned
@@ -56,29 +56,25 @@ This is the working implementation plan. It reflects what we've actually built a
 
 ---
 
-## Phase 3: Dynamic Agent Discovery and AgentGateway Integration
+## Phase 3: Dynamic Agent Discovery
 
-**Goal:** Agents join the swarm dynamically — no bridge restarts, no config file changes.
+**Goal:** Agents join the swarm dynamically — no bridge restarts, no config file changes — and the bridge can be restarted at any time without losing track of who's out there.
 
 ### What Needs to Happen
 
-Right now the bridge seeds agents via env vars (`SEED_AGENT_*`). This was fine for proving the loop, but breaks the dynamic registration story. An agent should be able to join by having its `community.swarm.agent.profile` published to the PDS (by anyone — the agent itself, an admin, a provisioning script).
+The bridge already watches the firehose for `community.swarm.agent.profile` records and registers them in its in-memory registry. It also already fetches the A2A agent card from each agent's `a2aEndpoint` to merge skill tags from the card with the tags declared in the atproto profile. What's missing:
 
-The bridge already watches for `community.swarm.agent.profile` records on the firehose and registers them in its in-memory registry. What's missing:
+1. **Startup state rebuild from the PDS, not the firehose.** On startup the registry is empty until new profiles flow through the firehose. The bridge should query the PDS for the current set of profiles directly: `com.atproto.sync.listRepos` to enumerate repos, then `com.atproto.repo.listRecords` with `collection=community.swarm.agent.profile` per repo. This treats the PDS as the source of truth (which it is) and the firehose as a notification stream for *changes*. Replaying the firehose from a cursor would work but is the indirect answer — replay is for event ordering, not current state.
 
-1. **AgentGateway integration.** When the bridge discovers a new agent, it should register a route in AgentGateway via the admin API (`POST /config`). This gives us AgentGateway's observability, LLM proxy, and any future policy features in the dispatch path.
+2. **Profile updates and deletes.** Today only `create` actions populate the registry. Updates should refresh the entry; deletes (or a future `status: offline` field) should remove or mark it.
 
-2. **Agent card discovery.** The bridge should fetch the agent's A2A agent card from its `a2aEndpoint` to get the full skill/capability list, rather than relying only on what's in the atproto profile. The profile is the announcement; the agent card is the source of truth.
-
-3. **Persistence.** The bridge's agent registry is in-memory — it's lost on restart. Either persist to disk/DB, or replay the firehose from a cursor on startup to rebuild state.
-
-4. **Deduplication.** Multiple profile updates for the same agent shouldn't create duplicate registry entries. Handle updates and deletes, not just creates.
+3. **Liveness at registration time.** The agent card fetch already doubles as a one-shot reachability check. Worth surfacing it explicitly in logs and skipping registration if the agent isn't reachable. Ongoing health monitoring is *not* the bridge's job — that's gateway/observability work for whenever gateway comes back.
 
 ### What We'll Discover
 
-- Whether the AgentGateway full-config-replacement API is workable for dynamic registration (race conditions with concurrent registrations?)
-- Whether the atproto profile + A2A agent card alignment works in practice
-- How to handle agents going offline (profile deleted? status field? TTL?)
+- Whether `listRepos` + `listRecords` is fast enough to be done synchronously at startup, or whether the bridge needs to come up serving an empty registry and backfill in the background.
+- Whether the atproto profile + A2A agent card alignment works in practice (already partially answered — the merge logic is there, but we don't yet have multiple agents to stress it).
+- How to handle agents going offline. Profile deletion is the cleanest signal but agents may not clean up after themselves.
 
 ---
 
@@ -139,6 +135,7 @@ These are real concerns but don't have phases assigned. They emerge from usage:
 - **Quality/trust scoring via labelers** — when there's enough interaction data
 - **Custom dashboard UI (A2UI)** — when the API is stable and we want richer human interaction
 - **Bridge redundancy** — multiple bridge instances with claim-before-dispatch dedup (see design doc)
+- **AgentGateway re-introduction** — when there's a concrete need for A2A traffic observability, policy enforcement, or an LLM proxy in the dispatch path. Reintroducing it should keep atproto as the source of truth and have a separate reconciler (not the bridge) project profiles into gateway config, so the bridge stays focused on atproto ↔ A2A translation.
 - **Private communication patterns** — DMs as human-to-agent private channel, encrypted records, or separate access-controlled channels for sensitive coordination
 - **Retention/archival** — when repo growth from signal threads becomes a concern
 - **Async A2A support** — push notification callbacks in the bridge for long-running agent tasks (the delivery agent's async flow exposed this gap)

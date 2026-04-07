@@ -58,16 +58,14 @@ cd ..
 ## 4. Start the Stack
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
-
-The `--build` ensures AgentGateway's image is built from the local Dockerfile (which copies the seed config into the container).
 
 Verify everything is running:
 
 ```bash
 docker compose ps
-# Should show: plc-db (healthy), plc, pds, caddy, relay, agentgateway — all Up
+# Should show: plc-db (healthy), plc, pds, caddy, relay — all Up
 ```
 
 Check services:
@@ -75,7 +73,6 @@ Check services:
 ```bash
 curl -s https://pds.murmur.internal/xrpc/_health        # PDS
 curl -s http://localhost:2470/xrpc/_health               # Relay
-curl -s http://localhost:15000/config | jq '.binds[0]'   # AgentGateway (should show empty routes)
 ```
 
 ## 5. Create Accounts (first time or after volume wipe)
@@ -117,8 +114,6 @@ env RELAY_URL=ws://localhost:2470 \
     PDS_URL=https://pds.murmur.internal \
     BRIDGE_HANDLE=bridge.test \
     BRIDGE_PASSWORD=bridge-sandbox-pass \
-    GATEWAY_ADMIN_URL=http://localhost:15000 \
-    GATEWAY_URL=http://localhost:3000 \
     ./bridge
 ```
 
@@ -128,7 +123,7 @@ You should see:
 
 ## 9. Publish Agent Profile
 
-With the bridge running, publish a profile to register the delivery agent in the swarm. The bridge will discover it on the firehose, register a route in AgentGateway, and start routing matching signals through the gateway.
+With the bridge running, publish a profile to register the delivery agent in the swarm. The bridge will discover it on the firehose, fetch the agent's A2A card to merge skill tags, and add it to its in-memory registry.
 
 ```bash
 # Get auth token and DID for agent-one
@@ -166,14 +161,8 @@ curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.putRecord \
 
 In the bridge terminal you should see:
 - `discovered agent profile` with the agent's DID and endpoint
-- `gateway route registered` with the handle and dispatch URL
-- `agent registered` with the merged tags
-
-Verify the route in AgentGateway:
-
-```bash
-curl -s http://localhost:15000/config | jq '.binds[0].listeners[0].routes'
-```
+- `agent tags resolved` with the merged tags from profile + agent card
+- `agent registered`
 
 **Note:** `putRecord` with identical content produces no commit (no firehose event). If the bridge missed the profile, change something in the record (e.g., the description) to trigger a new commit.
 
@@ -209,7 +198,7 @@ curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.createRecord \
 
 **Bridge terminal** should show:
 - `signal received` with the content and capabilities
-- `dispatching to agent` with `dispatch_url=http://localhost:3000/agent-one.test` (through the gateway)
+- `dispatching to agent` with `dispatch_url=http://localhost:5006` (the agent's `a2aEndpoint`)
 - `A2A result received` with the package status
 - `reply signal published`
 
@@ -221,10 +210,6 @@ curl -s "https://pds.murmur.internal/xrpc/com.atproto.repo.listRecords?repo=brid
 ```
 
 Should show a `type: "result"` record with the package tracking info.
-
-**Verify the route in AgentGateway:**
-
-AgentGateway admin UI is at http://localhost:15000 — you should see the `agent-one.test` route.
 
 **Optional: watch the firehose in another terminal:**
 
@@ -238,7 +223,7 @@ docker compose exec pds goat firehose --relay-host ws://relay:2470
 # Stop everything
 docker compose down
 
-# Stop and wipe all data (accounts, repos, relay state, gateway routes)
+# Stop and wipe all data (accounts, repos, relay state)
 docker compose down -v
 ```
 
@@ -247,10 +232,7 @@ docker compose down -v
 - **PDS won't start:** Check `docker compose logs pds`. Common issues: missing `PDS_BLOBSTORE_DISK_LOCATION` or `PDS_DEV_MODE` in pds.env.
 - **Relay rejects PDS registration:** The relay needs to reach `pds.murmur.internal` via Docker DNS. Check that Caddy has the network alias and the CA bundle is mounted.
 - **Bridge can't authenticate:** Make sure the bridge account exists (`./scripts/create-accounts.sh`) and `PDS_URL` uses `https://pds.murmur.internal`.
-- **Bridge doesn't see the agent profile:** The bridge only watches live firehose events. Publish the profile after the bridge is running. If re-publishing identical content, change something to trigger a new commit.
-- **AgentGateway route not found (404):** The config was written but the file watcher didn't reload. This happens with bind-mounted files. The current setup uses a Dockerfile-based build to avoid this — make sure you ran `docker compose up -d --build`. If routes still don't load, restart the gateway: `docker compose restart agentgateway`.
-- **AgentGateway can't reach agent:** The backend host must be `host.docker.internal:<port>` (not `localhost`) since the gateway runs in Docker. The bridge handles this translation automatically.
-- **AgentGateway config write permission denied:** The container needs write access to `/config.yaml`. The Dockerfile copies the seed config in (owned by the container user). If you switch back to bind mounts, you'll need `security_opt: [label=disable]` and `chmod 666` on the file.
+- **Bridge doesn't see the agent profile:** The bridge only watches live firehose events. Publish the profile after the bridge is running. If re-publishing identical content, change something to trigger a new commit. (A startup PDS query that backfills the registry is on the Phase 3 to-do list.)
 - **A2A dispatch fails with "Method not found":** The agent's A2A SDK version doesn't match. The bridge uses the 1.0 spec (`SendMessage`). Ensure the agent uses `a2a-sdk >= 1.0.0a0` (Python) or equivalent.
 - **A2A dispatch fails with unknown field errors:** The agent's SDK rejects fields like `kind`. This is a protobuf vs JSON format mismatch. The Go SDK (`a2a-go/v2`) and Python SDK (`a2a-sdk >= 1.0.0a0`) should agree — check both are on the latest versions.
 - **PDS env changes don't take effect:** Use `docker compose up -d --force-recreate pds`, not `restart`.

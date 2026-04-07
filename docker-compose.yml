@@ -84,17 +84,13 @@ services:
     ports:
       - "2470:2470"
 
-  # AgentGateway — A2A routing, policies, observability
-  agentgateway:
-    build: ./agentgateway
-    ports:
-      - "3000:3000"     # A2A listener
-      - "15000:15000"   # Admin UI + API
-    command: ["-f", "/config.yaml"]
-    environment:
-      ADMIN_ADDR: "0.0.0.0:15000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+  # AgentGateway is intentionally not in the dispatch path right now.
+  # The integration was proven in commit 26d86e1 but introduces a second
+  # registry that the bridge has to keep in sync with atproto profiles.
+  # Until we have a concrete need (observability, policy, LLM proxy) that
+  # the bridge alone can't satisfy, the bridge dispatches directly to the
+  # agent's a2aEndpoint. The agentgateway/ build context is preserved
+  # on disk so this can be re-enabled without re-deriving the config.
 
 volumes:
   plc-db-data:

@@ -34,7 +34,6 @@ type Bridge struct {
 	pdsURL   string
 	bridgeDID string
 	registry *AgentRegistry
-	gateway  *GatewayClient
 
 	// PDS auth
 	accessToken string
@@ -49,18 +48,14 @@ func main() {
 	pdsURL := envOrDefault("PDS_URL", "https://pds.murmur.internal")
 	bridgeHandle := envOrDefault("BRIDGE_HANDLE", "bridge.test")
 	bridgePassword := envOrDefault("BRIDGE_PASSWORD", "bridge-sandbox-pass")
-	gatewayAdminURL := envOrDefault("GATEWAY_ADMIN_URL", "http://localhost:15000")
-	gatewayURL := envOrDefault("GATEWAY_URL", "http://localhost:3000")
 
 	registry := NewAgentRegistry(logger)
-	gateway := NewGatewayClient(gatewayAdminURL, gatewayURL, logger)
 
 	b := &Bridge{
 		logger:   logger,
 		relayURL: relayURL,
 		pdsURL:   pdsURL,
 		registry: registry,
-		gateway:  gateway,
 		handle:   bridgeHandle,
 		password: bridgePassword,
 	}
@@ -230,20 +225,14 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 
 	// Dispatch to all matching agents (v0 strategy: let them all respond)
 	for _, agent := range agents {
-		// Dispatch through AgentGateway if the agent has a handle (registered route)
-		dispatchURL := agent.A2AEndpoint
-		if agent.Handle != "" {
-			dispatchURL = b.gateway.DispatchURL(agent.Handle)
-		}
-
 		b.logger.Info("dispatching to agent",
 			"agent", agent.Name,
 			"handle", agent.Handle,
-			"dispatch_url", dispatchURL,
+			"dispatch_url", agent.A2AEndpoint,
 			"signal_uri", uri,
 		)
 
-		result, err := sendA2ATask(ctx, dispatchURL, content)
+		result, err := sendA2ATask(ctx, agent.A2AEndpoint, content)
 		if err != nil {
 			b.logger.Error("A2A dispatch failed",
 				"agent", agent.Name,
@@ -322,17 +311,6 @@ func (b *Bridge) handleAgentProfile(ctx context.Context, did string, record map[
 		A2AEndpoint: endpoint,
 		Tags:        tags,
 	})
-
-	// Register a route in AgentGateway so dispatch goes through the gateway
-	if handle != "" {
-		if err := b.gateway.RegisterAgent(handle, endpoint); err != nil {
-			b.logger.Error("failed to register agent with gateway",
-				"handle", handle,
-				"endpoint", endpoint,
-				"error", err,
-			)
-		}
-	}
 }
 
 // fetchAgentCardTags fetches the agent's A2A card and extracts skill tags.
