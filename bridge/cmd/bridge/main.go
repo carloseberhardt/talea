@@ -68,6 +68,10 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
+	if err := b.backfillRegistry(ctx); err != nil {
+		logger.Warn("registry backfill failed — bridge will start with empty registry and rely on live firehose events", "error", err)
+	}
+
 	logger.Info("bridge starting",
 		"relay", relayURL,
 		"pds", pdsURL,
@@ -81,6 +85,124 @@ func main() {
 	}
 
 	logger.Info("bridge stopped")
+}
+
+// --- Startup registry backfill ---
+
+// backfillRegistry queries the PDS for all existing agent profiles and seeds
+// the registry with them before the firehose subscription begins. This makes
+// bridge restarts safe: agents that registered while the bridge was down
+// don't need to re-publish their profiles to be discovered.
+//
+// The PDS is the source of truth for repo state; the firehose is for changes.
+// We treat backfill as authoritative for "what exists right now" and let the
+// firehose take over for live updates from the moment we connect.
+func (b *Bridge) backfillRegistry(ctx context.Context) error {
+	dids, err := b.listAllRepos(ctx)
+	if err != nil {
+		return fmt.Errorf("listRepos failed: %w", err)
+	}
+
+	b.logger.Info("backfilling registry from PDS", "repos", len(dids))
+
+	var found int
+	for _, did := range dids {
+		if did == b.bridgeDID {
+			continue
+		}
+		record, err := b.fetchAgentProfile(ctx, did)
+		if err != nil {
+			b.logger.Warn("failed to fetch agent profile during backfill", "did", did, "error", err)
+			continue
+		}
+		if record == nil {
+			continue
+		}
+		b.handleAgentProfile(ctx, did, record)
+		found++
+	}
+
+	b.logger.Info("registry backfill complete", "agents_loaded", found)
+	return nil
+}
+
+// listAllRepos enumerates every DID hosted on the PDS, paginating via cursor.
+func (b *Bridge) listAllRepos(ctx context.Context) ([]string, error) {
+	var dids []string
+	cursor := ""
+	for {
+		u := fmt.Sprintf("%s/xrpc/com.atproto.sync.listRepos?limit=500", b.pdsURL)
+		if cursor != "" {
+			u += "&cursor=" + url.QueryEscape(cursor)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		var page struct {
+			Cursor string `json:"cursor"`
+			Repos  []struct {
+				DID string `json:"did"`
+			} `json:"repos"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&page)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("decode listRepos response: %w", err)
+		}
+
+		for _, r := range page.Repos {
+			dids = append(dids, r.DID)
+		}
+
+		if page.Cursor == "" || len(page.Repos) == 0 {
+			break
+		}
+		cursor = page.Cursor
+	}
+	return dids, nil
+}
+
+// fetchAgentProfile returns the community.swarm.agent.profile record for a DID,
+// or nil if the repo has no profile of that collection.
+func (b *Bridge) fetchAgentProfile(ctx context.Context, did string) (map[string]any, error) {
+	u := fmt.Sprintf("%s/xrpc/com.atproto.repo.listRecords?repo=%s&collection=%s&limit=1",
+		b.pdsURL, url.QueryEscape(did), profileCollection)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		// 400 here typically means "no records of that collection in this repo" — not an error.
+		return nil, nil
+	}
+
+	var result struct {
+		Records []struct {
+			Value map[string]any `json:"value"`
+		} `json:"records"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode listRecords response: %w", err)
+	}
+
+	if len(result.Records) == 0 {
+		return nil, nil
+	}
+	return result.Records[0].Value, nil
 }
 
 // --- Firehose consumption ---
