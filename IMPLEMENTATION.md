@@ -78,30 +78,52 @@ The bridge already watches the firehose for `community.swarm.agent.profile` reco
 
 ---
 
-## Phase 4: Human Interaction and the Slow Path
+## Phase 4: Human onramp and the first swarm agent
 
-**Goal:** Humans post natural language signals without capability tags, and the system figures out where to route them.
+**Goal:** Humans post natural-language signals (no capability tags), and the right things happen — without putting any content-aware logic into the bridge.
+
+### Background: why this phase changed shape
+
+The original Phase 4 had "implement the slow path in the bridge" as item one — a triage function inside the bridge that classified tagless signals and republished them with inferred capabilities. We rejected that approach. Two reasons:
+
+1. **Humans never tag.** Realistic human posts ("where's package 123", "weird latency on checkout", "deploying in 30 min") don't carry capability tags. So *every* human signal needs triage, not just exceptional ones. There is no "fast path vs slow path" — there's just one path, and it goes through some kind of classification.
+
+2. **The bridge must not be content-aware.** The moment the bridge looks at signal content to make routing decisions, it stops being a structural router and starts being a domain-aware service. That's the same architectural smell we removed when we pulled AgentGateway out of the dispatch path. The bridge knows about *structure* (capability tags, thread refs, DIDs). It must not know about *content*.
+
+The resolution: triage isn't a bridge function at all. It's an agent — specifically, a **swarm agent** that subscribes to the firehose, sees tagless signals as they appear, classifies them, and publishes a tagged signal in the same thread. The bridge then dispatches the tagged signal through its existing fast-path logic. The bridge gets *zero* new code for any of this.
+
+This generalizes: triage is one of a class of "swarm skills" that operate on swarm artifacts. See the **Swarm agents as a skill runtime** section below for the full design.
+
+### Two classes of agents
+
+Established as a hard architectural principle going forward:
+
+- **Domain agents** — protocol-naive, A2A-only. They do work (deliver, look up, calendar, code search). They never see atproto. Today's delivery agent is the canonical example. Adoption story: any team with an A2A endpoint can plug in.
+- **Swarm agents** — atproto-aware, firehose-subscribing. They decide what work should happen (triage, routing, summarization, dedup, correlation, severity tagging). They participate *in* the swarm rather than being dispatched *to*. These are intentional infrastructure built by whoever runs the swarm; they trade protocol-naivety for cross-cutting visibility.
+
+The bridge's job stays exactly what it is: capability-tagged signal in → matching domain agents dispatched. Nothing more.
 
 ### Work
 
-1. **Implement the slow path in the bridge.** When a signal arrives with no capability tags:
-   - Bridge invokes a triage function (LLM call or dedicated triage agent via A2A)
-   - Triage classifies the request and returns capability tags
-   - Bridge publishes a routing signal in-thread (visible, auditable) with the tags
-   - That routing signal hits the firehose → fast path takes over
+1. **CLI for humans.** Replaces the curl ceremony in the runbook. Optimized for fast capture, free-text first, terse output, retrievable threads. This is how humans actually post — and now that triage is going to live in a swarm agent, the human-posting flow is the prerequisite for the swarm agent to be useful, not the other way around.
 
-2. **Build a CLI tool for signal creation.** Something better than curl — a simple script or small CLI that lets Carlos post signals, browse threads, and see responses. API-first, not a GUI.
+2. **Swarm-agent runtime.** New service (likely a separate Go binary, or a small Python service if we want to lean on the LLM ecosystem). Reuses the bridge's firehose subscription code (extract a small shared package). Loads skills from a directory at startup. Subscribes to the firehose, decides per-event which (if any) skills to activate, publishes resulting signals back to the PDS under its own DID. Knows nothing about specific skills — it's a host, not a classifier.
 
-3. **Multi-agent scenarios.** Post signals that match multiple agents. Observe how the "dispatch to all" v0 strategy works in practice. Multiple agents respond in-thread — does the conversation make sense?
+3. **Triage skill.** First skill, validates the runtime end to end. Activation: any signal from a human DID that has no capability tags. Action: classify the content (LLM call or hand-written rules), publish a routing signal in the same thread carrying the inferred tags. The bridge then dispatches via its existing fast-path. The thread reads as a clear trace: human ask → triage decision → domain agent answer.
 
-4. **Mentions as direct dispatch.** `@agent-name.test` in a signal should route directly to that agent, bypassing capability matching. The bridge resolves the handle to a DID and dispatches.
+4. **Mentions as direct dispatch.** `@agent-name.test` in a signal should route directly to that agent, bypassing capability matching. This stays in the bridge (it's structural — handle resolution and direct dispatch, no content reasoning). Useful for the human-posting flow when you *do* know who to ask.
+
+5. **A second swarm skill** to validate the runtime is genuinely skill-pluggable. Probably summarization (when a thread crosses N replies, post a checkpoint summary) — exercises a different activation pattern (thread state, not single event) and is genuinely useful.
+
+6. **Multi-agent scenarios.** Post signals that match multiple domain agents. Observe how "dispatch to all" works in practice. Now also exercises swarm-skill-plus-domain-agent threads.
 
 ### What We'll Discover
 
-- Whether LLM triage is fast enough for interactive use
-- How multi-agent threads look and feel in practice
-- Whether we need the delegation record (`community.swarm.delegation`) for explicit task assignment
-- When "dispatch to all" breaks down and we need selection logic
+- Whether autonomous LLM-driven activation (every firehose event = "is this skill relevant?") is cost-tractable, or whether we need cheap pre-filters via skill metadata
+- How the routing-via-published-signal pattern feels in practice (clarity vs. noise in the thread)
+- Whether the runtime needs explicit loop protection beyond own-DID dedup (e.g., a `triagedFrom` field on routing signals so triage doesn't classify its own output)
+- How threads with multiple swarm skills firing on the same signal compose
+- Whether the agentskills.io spec's progressive-disclosure model fits autonomous use as cleanly as it fits interactive coding agents
 
 ---
 
@@ -199,3 +221,127 @@ This is why the small forward-compatibility step in Phase 3 matters: when we add
 
 - **Phase 3 update:** when adding profile update/delete handling, include a `managed_by_bridge` (or equivalent) field on registry entries. Pure forward-compatibility — no cost today.
 - **Phase 4 reconsideration:** a CLI that publishes agent profiles directly to atproto becomes *less* central in this model, because direct publishing isn't the primary onramp. It's still useful for testing and for the self-published path, but it's no longer the main story for "how does an agent get into the swarm."
+
+---
+
+## Future direction: Swarm agents as a skill runtime
+
+Recorded so future-us doesn't re-derive it. The Phase 4 section above is the "what to build" view; this section is the "why this shape" view, plus the alignment with the agentskills.io standard.
+
+### Recap of the principle
+
+The bridge is structurally dumb: it knows about capability tags and thread refs, never about content. Anything that requires reading what a signal *says* — triage, classification, summarization, dedup, correlation, severity tagging — lives outside the bridge.
+
+That work happens in **swarm agents**: agents that subscribe to the firehose, see signals as they appear, and publish new signals in response. They're atproto-aware by necessity (they can't be protocol-naive and still have firehose visibility), and they're built deliberately by whoever runs the swarm. They are *of* the swarm, not just *in* it.
+
+There are two natural classes of agents in the architecture:
+
+| | Domain agents | Swarm agents |
+| --- | --- | --- |
+| Protocol awareness | A2A only (naive about atproto) | atproto + A2A |
+| Activation | Dispatched to by the bridge | Self-activate from firehose events |
+| Source of truth | An external team / vendor / repo | The swarm operator |
+| Examples | Delivery tracking, calendar, code search, support ticket creation | Triage, summarization, dedup, correlation, severity tagging, routing |
+| Onboarding friction | Should be near zero (the gateway-as-onramp story) | Intentional infrastructure investment |
+
+This is the load-bearing distinction. Most "should this be a bridge feature?" questions have clean answers if you ask "is this content-aware?" — if yes, it belongs in a swarm agent, not in the bridge.
+
+### Why one runtime with skills (instead of N agents)
+
+When you enumerate the things swarm agents need to do — triage signals, summarize threads, detect dupes, correlate across threads, tag severity, translate, digest — the shared infrastructure is enormous and the differentiated logic is small:
+
+**Shared (the runtime):** firehose subscription, commit parsing, self-DID dedup, PDS authentication, signal publishing, thread structure, loop protection.
+
+**Differentiated (each skill):** "given this event, should I do anything? if so, what should I publish?"
+
+Building each as its own agent would mean duplicating the shared infrastructure N times, running N processes, managing N DIDs, hitting the relay with N firehose subscriptions. Almost all of the code would be boilerplate. The right shape is **one runtime that hosts many skills**: a thin host loop that handles infrastructure, a directory of skills that provide behavior. The runtime is small; the skills carry the intelligence.
+
+This is the same shape modern agent harnesses have been converging on (Claude Code, Goose, Cursor, Codex, etc.) and the existence of the agentskills.io standard reflects that convergence.
+
+### Alignment with the agentskills.io specification
+
+We want our skills to conform to the [Agent Skills](https://agentskills.io) specification so that:
+
+1. Skills are portable across runtimes (in principle a swarm skill could be loaded by any agentskills-compatible host, with the appropriate context plumbing)
+2. We benefit from the broader ecosystem's tooling (validators, examples, conventions)
+3. Skill authors don't need to learn a swarm-specific format
+
+#### What the spec gives us
+
+A skill is a directory containing at minimum a `SKILL.md` file (YAML frontmatter + Markdown body), with optional `scripts/`, `references/`, `assets/` subdirectories. Required frontmatter fields: `name` (1-64 chars, lowercase + hyphens, must match parent dir) and `description` (1-1024 chars, what the skill does + when to use it). Optional: `license`, `compatibility`, `metadata` (arbitrary key-value), `allowed-tools` (experimental).
+
+The spec assumes **progressive disclosure**: metadata loads at startup for all skills (~100 tokens each), the full SKILL.md body loads only when a skill is activated, and resources load on demand. This is the model that lets a host scale to many skills without paying their context cost up front.
+
+#### Where we extend the spec (carefully)
+
+The spec was designed for **interactive LLM agent hosts** — tools where a user gives the agent a task, the agent looks at skill descriptions, decides which to load, then proceeds. Activation is implicit in the description ("use this skill when the user asks about PDFs").
+
+Our use is **autonomous event processing**: every firehose event is a potential trigger, and we can't afford to do full LLM reasoning ("which skills are relevant?") on every commit message. We need cheap pre-filtering.
+
+The spec accommodates this through the `metadata` field, which is explicitly an arbitrary map for client-specific extensions. We'd define a small set of conventional keys under a swarm-namespaced prefix:
+
+```yaml
+---
+name: triage
+description: Classify untagged signals from human users and publish a routing signal in the same thread with inferred capability tags. Use when a signal has no capability tags and originates from a human DID.
+metadata:
+  swarm.activation.collection: community.swarm.signal
+  swarm.activation.condition: no-capabilities
+  swarm.activation.sender-class: human
+---
+```
+
+The runtime checks the `swarm.activation.*` metadata cheaply (no LLM call) on every firehose event and only loads the skill body and invokes the LLM for events that pass the prefilter. Skills without `swarm.activation.*` metadata fall back to spec-default behavior: the runtime asks the LLM "is this skill relevant?" using the description.
+
+The extension lives entirely in the `metadata` field, so skills remain spec-conformant. Other agentskills-compatible hosts that don't understand `swarm.activation.*` would simply ignore it and use the description-based activation path.
+
+### Routing as published signals (the thread is the trace)
+
+The triage skill (and any other routing-style skill) doesn't return its decision through some private channel. It **publishes a signal** in the same thread carrying the inferred capabilities. The bridge sees that signal on the firehose and dispatches via its existing fast path. The thread becomes a self-documenting trace of "human asked → triage classified → domain agent answered," all signed and durable.
+
+This means the bridge needs no special handling for swarm-skill output. Routing signals are just signals with capabilities. The fact that a swarm skill produced them is invisible to the bridge — and that's the goal.
+
+### Concerns to design around
+
+1. **Cost per event.** Even with metadata pre-filters, an LLM-driven runtime that activates skills on every matching event has a non-trivial cost profile. Mitigations: aggressive metadata filtering, batching of related events, caching of recent classifications, and choosing model size per skill. None of these are blockers for a sandbox; all of them matter at scale.
+
+2. **Loops.** A swarm skill publishes a signal. The signal hits the firehose. Another skill (or the same skill) sees it and reacts. Repeat. Mitigations:
+   - **Self-DID dedup** (the runtime ignores its own posts) — necessary but not sufficient if multiple swarm-agent instances exist.
+   - **Sender-class filter** (e.g., "triage only acts on human-posted signals") expressed via skill metadata.
+   - **Provenance fields on routing signals** (e.g., `routedFrom: at://...`) so triage can tell its own output apart from genuine new signals.
+   - **Depth/hop counters** on signals as a last-resort circuit breaker.
+
+3. **Trust isolation.** Mixing critical infrastructure skills (triage) with playful or user-installable skills (translate-to-pirate, summarize-my-mentions) in one process means a buggy optional skill can affect the critical path. Mitigation: run multiple instances of the same runtime, partitioned by skill trust level. One instance loads only core infrastructure skills with a stable skill set; another loads experimental or user-installable skills. Same code, different config. Defer until it matters.
+
+4. **The runtime is bigger than it looks.** Firehose subscription, PDS publishing, identity management, skill loading, LLM invocation, dedup state — it adds up. Worth being honest that this is a non-trivial service, not "the bridge plus a few helpers." It deserves its own repo path, its own tests, its own deployment story.
+
+### Concrete sketch of the runtime
+
+A first-pass shape, not a final design:
+
+```
+swarm-agent/
+├── cmd/swarm-agent/
+│   ├── main.go            # firehose subscription, dispatch loop
+│   ├── skills.go          # skill loader, metadata index, activation
+│   ├── llm.go             # LLM client (Anthropic SDK)
+│   └── publish.go         # PDS client for publishing signals
+├── skills/
+│   ├── triage/
+│   │   ├── SKILL.md
+│   │   └── references/
+│   │       └── capability-taxonomy.md
+│   └── summarize-thread/
+│       └── SKILL.md
+└── go.mod
+```
+
+The runtime starts by indexing all skills under `skills/` (loading just the frontmatter, per progressive disclosure). For each firehose event, it checks the metadata pre-filters against the event, collects matching skills, loads their bodies, invokes the LLM with the event content + skill instructions, and publishes whatever signal(s) the LLM produces. The LLM is the thing doing the actual reasoning; the runtime is the plumbing.
+
+The runtime's own DID would be something like `swarm-agent.test` (or per-skill DIDs if we want per-skill attribution — that's a later decision).
+
+### What this implies for nearer-term work
+
+- **Phase 4 is now structured around this design** — see the rewritten Phase 4 above for the build order.
+- **No bridge changes are required** for any of this. The bridge stays exactly as it is. That's the cleanest possible outcome and it's the clearest sign the architecture is right.
+- **The skill format constraint affects what we build first.** Before writing the triage skill, we should pin a small number of capability tags as the canonical taxonomy (delivery, monitoring, calendar, etc.) so triage has something to classify *into*. Otherwise the first triage skill has to also invent the vocabulary, which conflates two different decisions.
