@@ -279,6 +279,16 @@ func (b *Bridge) handleCommit(ctx context.Context, evt *comatproto.SyncSubscribe
 			continue
 		}
 
+		// Deletes carry no record bytes — handle them before fetching.
+		// Today only profile deletes are meaningful (drop the agent from
+		// the registry); signal deletes are ignored.
+		if op.Action == "delete" {
+			if colStr == profileCollection {
+				b.handleAgentProfileDelete(evt.Repo)
+			}
+			continue
+		}
+
 		if op.Action != "create" && op.Action != "update" {
 			continue
 		}
@@ -409,8 +419,20 @@ func (b *Bridge) handleAgentProfile(ctx context.Context, did string, record map[
 		"profile_tags", profileTags,
 	)
 
-	// Fetch the A2A agent card to get the full skill/tag list
-	cardTags := b.fetchAgentCardTags(ctx, endpoint)
+	// Liveness check: fetch the A2A agent card. If unreachable, refuse to
+	// register — dispatching to an agent we can't reach would just generate
+	// failures. The card is also the source of truth for skill tags, which
+	// we merge with the profile-declared tags.
+	cardTags, err := b.fetchAgentCardTags(ctx, endpoint)
+	if err != nil {
+		b.logger.Warn("agent card unreachable — skipping registration",
+			"did", did,
+			"name", name,
+			"endpoint", endpoint,
+			"error", err,
+		)
+		return
+	}
 
 	// Merge: profile tags + agent card tags, deduplicated
 	tags := mergeTags(profileTags, cardTags)
@@ -423,38 +445,46 @@ func (b *Bridge) handleAgentProfile(ctx context.Context, did string, record map[
 		"merged_tags", tags,
 	)
 
-	// Resolve the handle for this DID (used as the gateway route prefix)
 	handle := b.resolveHandle(ctx, did)
 
 	b.registry.Upsert(RegisteredAgent{
-		DID:         did,
-		Name:        name,
-		Handle:      handle,
-		A2AEndpoint: endpoint,
-		Tags:        tags,
+		DID:             did,
+		Name:            name,
+		Handle:          handle,
+		A2AEndpoint:     endpoint,
+		Tags:            tags,
+		ManagedByBridge: false, // self-published; bridge-minted profiles will set true
 	})
 }
 
+// handleAgentProfileDelete removes an agent from the registry when its profile
+// record is deleted. The agent profile is keyed by rkey "self" so the DID is
+// enough to identify the entry.
+func (b *Bridge) handleAgentProfileDelete(did string) {
+	if removed := b.registry.Remove(did); !removed {
+		b.logger.Debug("profile delete for unknown agent", "did", did)
+	}
+}
+
 // fetchAgentCardTags fetches the agent's A2A card and extracts skill tags.
-func (b *Bridge) fetchAgentCardTags(ctx context.Context, endpoint string) []string {
+// Returns an error if the card can't be retrieved or parsed — callers should
+// treat that as a liveness failure and refuse to register the agent.
+func (b *Bridge) fetchAgentCardTags(ctx context.Context, endpoint string) ([]string, error) {
 	cardURL := endpoint + "/.well-known/agent-card.json"
 
 	req, err := http.NewRequestWithContext(ctx, "GET", cardURL, nil)
 	if err != nil {
-		b.logger.Warn("failed to build agent card request", "url", cardURL, "error", err)
-		return nil
+		return nil, fmt.Errorf("build request: %w", err)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		b.logger.Warn("failed to fetch agent card", "url", cardURL, "error", err)
-		return nil
+		return nil, fmt.Errorf("fetch %s: %w", cardURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		b.logger.Warn("agent card fetch failed", "url", cardURL, "status", resp.StatusCode)
-		return nil
+		return nil, fmt.Errorf("%s returned HTTP %d", cardURL, resp.StatusCode)
 	}
 
 	var card struct {
@@ -463,15 +493,14 @@ func (b *Bridge) fetchAgentCardTags(ctx context.Context, endpoint string) []stri
 		} `json:"skills"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
-		b.logger.Warn("failed to decode agent card", "url", cardURL, "error", err)
-		return nil
+		return nil, fmt.Errorf("decode agent card: %w", err)
 	}
 
 	var tags []string
 	for _, skill := range card.Skills {
 		tags = append(tags, skill.Tags...)
 	}
-	return tags
+	return tags, nil
 }
 
 func mergeTags(a, b []string) []string {

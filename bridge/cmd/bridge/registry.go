@@ -13,6 +13,14 @@ type RegisteredAgent struct {
 	Handle      string   // atproto handle (e.g., "agent-one.test")
 	A2AEndpoint string   // URL for A2A task dispatch
 	Tags        []string // capability/skill tags for matching
+
+	// ManagedByBridge is true if the bridge minted this agent's atproto identity
+	// and is responsible for its profile lifecycle (the gateway-as-onramp future
+	// described in IMPLEMENTATION.md). False means the profile was self-published
+	// to atproto by the agent's owner. Today nothing is bridge-managed; the field
+	// is forward-compatibility insurance so we can distinguish the two origins
+	// once the gateway-as-onramp reconciler exists.
+	ManagedByBridge bool
 }
 
 // AgentRegistry maintains a mapping from capability tags to agents.
@@ -48,10 +56,26 @@ func (r *AgentRegistry) Upsert(agent RegisteredAgent) {
 	existing.Name = agent.Name
 	existing.A2AEndpoint = agent.A2AEndpoint
 	existing.Tags = agent.Tags
+	existing.ManagedByBridge = agent.ManagedByBridge
 	if agent.Handle != "" {
 		existing.Handle = agent.Handle
 	}
 	r.agents[agent.DID] = existing
+}
+
+// Remove drops an agent from the registry by DID. Returns true if the agent
+// was present.
+func (r *AgentRegistry) Remove(did string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	agent, ok := r.agents[did]
+	if !ok {
+		return false
+	}
+	delete(r.agents, did)
+	r.logger.Info("agent removed", "name", agent.Name, "did", did)
+	return true
 }
 
 // FindByCapability returns all agents that match any of the given capability tags.
