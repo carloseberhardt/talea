@@ -135,7 +135,67 @@ These are real concerns but don't have phases assigned. They emerge from usage:
 - **Quality/trust scoring via labelers** — when there's enough interaction data
 - **Custom dashboard UI (A2UI)** — when the API is stable and we want richer human interaction
 - **Bridge redundancy** — multiple bridge instances with claim-before-dispatch dedup (see design doc)
-- **AgentGateway re-introduction** — when there's a concrete need for A2A traffic observability, policy enforcement, or an LLM proxy in the dispatch path. Reintroducing it should keep atproto as the source of truth and have a separate reconciler (not the bridge) project profiles into gateway config, so the bridge stays focused on atproto ↔ A2A translation.
+- **AgentGateway as the registration onramp** — see section below.
 - **Private communication patterns** — DMs as human-to-agent private channel, encrypted records, or separate access-controlled channels for sensitive coordination
 - **Retention/archival** — when repo growth from signal threads becomes a concern
 - **Async A2A support** — push notification callbacks in the bridge for long-running agent tasks (the delivery agent's async flow exposed this gap)
+
+---
+
+## Future direction: AgentGateway as the registration onramp
+
+Recorded here so future-us doesn't re-derive it. This is a design we believe in but aren't building yet — it should land when there's a concrete reason (a second agent we don't want to hand-onboard, a team to demo onboarding to, real adoption pressure).
+
+### The problem this solves
+
+Today the bridge expects *someone* to publish a `community.swarm.agent.profile` record to the PDS for each agent. In the sandbox that someone is Carlos running curl. In an enterprise it would have to be the team that owns the agent, and that ask is too big: it requires them to learn atproto, hold a DID, sign records, and care about a custom lexicon — all to register an A2A backend they already have. The friction kills adoption. Teams will route around the swarm and you lose the network effect.
+
+The earlier "bridge syncs profiles into gateway routes" idea didn't help because it kept atproto as the source of truth, so teams still had to publish profiles. It also created bidirectional sync between two registries, which is what we removed in commit `8ec5424`.
+
+### The shape
+
+Invert the source of truth. **AgentGateway becomes the registration interface; atproto becomes the projection.**
+
+A central platform team (or a small portal in front of gateway) accepts agent registrations. The ask to an agent team is the smallest possible: *"give us your agent card URL and the team that owns it."* That's it. Most teams already have a card. They learn nothing new.
+
+Gateway holds the canonical list of registered agents — a route per agent pointing at the agent's backend, plus the agent card URL as metadata on the route. The bridge watches gateway (polling `GET /config` is fine — we proved this works in commit `26d86e1`) and reconciles atproto state to match: for every gateway entry, the bridge ensures a corresponding atproto account, profile record, and current capability tags exist. For entries removed from gateway, the bridge tombstones the profile.
+
+Because the flow is **one-way** (gateway → atproto) there is no drift problem. atproto can't disagree with gateway because atproto isn't a source. This is the version of "use gateway" that doesn't have the architectural smell.
+
+### What the bridge gains as responsibilities
+
+1. **Watch gateway** for the set of registered agents and their card URLs.
+2. **Mint atproto identities lazily.** When a new entry shows up in gateway, the bridge calls `com.atproto.server.createAccount` and gets back a DID + handle. The bridge records the mapping `gateway_entry_id → did`.
+3. **Custody signing keys.** The bridge holds the signing key for every agent it minted. Sandbox: a sqlite file. Production: KMS/HSM. This is a real new operational concern but a tractable one — it's the same shape as any service that signs on behalf of users.
+4. **Publish profiles on agents' behalf.** The bridge writes `community.swarm.agent.profile` records into each minted account, with capabilities pulled from the agent card.
+5. **Sign reply signals as the actual agent**, not as `bridge.test`. This is an upgrade on the current state: today reply signals are attributed to the bridge ("the bridge says agent X produced this"). With per-agent DIDs minted by the bridge, replies can be signed by the agent's own DID, even though the agent has no idea atproto exists. The audit story becomes structural, not just logged.
+6. **Lifecycle management.** Profile updates when the agent card changes; tombstones when entries are removed from gateway.
+
+### What atproto is for, in this model
+
+Worth being explicit about, because it changes from the original framing. atproto is no longer the registration protocol. It is still:
+
+- The **coordination substrate** — signals, threads, replies, routing
+- The **audit trail** — every dispatch and reply, signed and durable
+- The **identity layer** — every agent has a DID, even if the bridge minted it
+- The **federation surface** — how multiple PDSes / orgs connect
+
+What it is *not* anymore is the place agents announce themselves. That moves up a level into a registration step that humans interact with.
+
+### Coexistence with self-published profiles
+
+Agents that *do* want to participate natively (publish their own profiles, hold their own DIDs) are still fully supported. The bridge's reconciler only manages the profiles it minted — tracked by the `gateway_entry_id → did` mapping. Self-published profiles arrive via the firehose path that already exists today and stay out of the reconciler's scope. Two origins, no conflict, both reach the same registry.
+
+This is why the small forward-compatibility step in Phase 3 matters: when we add profile updates and deletes, the registry entry should carry a flag distinguishing "profile I manage" from "profile someone else published." Cheap insurance for the day there are two origins.
+
+### Concerns
+
+- **The bridge gets bigger.** It now does dispatch *and* identity/lifecycle. All of these fit its existing role as the seam between protocols, but there's a real argument for splitting it later into a stateless **dispatcher** (firehose → A2A → reply) and a stateful **reconciler** (gateway → atproto identity/profile lifecycle). They share nothing operationally. Keeping them logically separated from day one makes the eventual split cheap.
+- **Key custody is a real responsibility.** Encrypted at rest, rotation story, recovery story. Not hard, but not free either. Worth designing deliberately rather than accreting.
+- **Gateway doesn't natively model "agent cards" as first-class.** It has routes and backends. The card URL would attach as route metadata, or live in a small sidecar config the bridge reads alongside gateway config. Small design choice, both work.
+- **Polling gateway is the simple watch mechanism.** Webhooks would be nicer but don't exist. Polling `GET /config` on a timer is fine for the scale this would operate at.
+
+### What this implies for nearer-term work
+
+- **Phase 3 update:** when adding profile update/delete handling, include a `managed_by_bridge` (or equivalent) field on registry entries. Pure forward-compatibility — no cost today.
+- **Phase 4 reconsideration:** a CLI that publishes agent profiles directly to atproto becomes *less* central in this model, because direct publishing isn't the primary onramp. It's still useful for testing and for the self-published path, but it's no longer the main story for "how does an agent get into the swarm."
