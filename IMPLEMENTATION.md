@@ -41,6 +41,7 @@ This is the working implementation plan. It reflects what we've actually built a
 3. **Relay built from source** — The official Indigo relay has hardcoded SSRF protection that blocks connections to private IPs. We patched `util/ssrf/ssrf.go` to disable `PublicOnlyControl` for the sandbox. This is a one-line change in the Go source.
 4. **Bridge dispatches directly to agents** — not through AgentGateway. AgentGateway integration was built and proven in commit `26d86e1` (its admin API on port 15000 supports runtime config updates via full-config replacement, not fine-grained CRUD), then removed from the dispatch path. The reason: putting the gateway in the dispatch path created a second registry — agent profiles in atproto repos *and* routes in AgentGateway — and made the bridge responsible for keeping the two in sync. Reconciliation would have made the bridge a worse SPOF without buying us anything the sandbox actually needs yet. The bridge now reads agent profiles from the firehose, keeps an in-memory registry, and dispatches directly to each agent's `a2aEndpoint`. AgentGateway can come back when we have a concrete need (observability of A2A traffic, policy enforcement, LLM proxy) that the bridge alone can't satisfy. The dispatch destination is a single per-call decision, so swapping it for a gateway URL later is a small change.
 5. **Full results in reply signals** — the bridge publishes complete A2A results back to atproto threads, not just metadata. Network-level trust model for the sandbox (see design doc security section).
+6. **AgentGateway returns in Phase 4 — but as an LLM router, not an A2A router.** Different role from the dispatch-path use we removed in commit `8ec5424`. The Phase 4 swarm agent makes its LLM calls through gateway (port 4000) so model selection (gpt-oss-120b on watsonx, Bedrock, local, anthropic) becomes a config decision instead of a code change. Config lifted from `~/projects/agent-skill-poc/infra/agent-gateway/config.yaml`. Gateway is *never* in the A2A dispatch path; the bridge still dispatches directly to each agent's `a2aEndpoint`. The two roles of gateway in this architecture (LLM router, immediate; agent registration onramp, future) are completely separate and don't conflict.
 
 ### Lessons Learned
 
@@ -78,52 +79,91 @@ The bridge already watches the firehose for `community.swarm.agent.profile` reco
 
 ---
 
-## Phase 4: Human onramp and the first swarm agent
+## Phase 4: Human onramp, mention dispatch, and the first swarm agent
 
-**Goal:** Humans post natural-language signals (no capability tags), and the right things happen — without putting any content-aware logic into the bridge.
+**Goal:** Humans post natural-language signals via a CLI, the bridge dispatches by @-mention with conversation continuity, and the first swarm agent (running a triage skill) handles signals that arrive without explicit mentions.
 
-### Background: why this phase changed shape
+### Background: how this phase took shape
 
-The original Phase 4 had "implement the slow path in the bridge" as item one — a triage function inside the bridge that classified tagless signals and republished them with inferred capabilities. We rejected that approach. Two reasons:
+Phase 4 went through two reframings before settling:
 
-1. **Humans never tag.** Realistic human posts ("where's package 123", "weird latency on checkout", "deploying in 30 min") don't carry capability tags. So *every* human signal needs triage, not just exceptional ones. There is no "fast path vs slow path" — there's just one path, and it goes through some kind of classification.
+1. **First version:** "implement a slow path in the bridge" — bridge runs an LLM triage function for tagless signals. Rejected because the bridge must not be content-aware, and because *every* human signal is tagless (humans don't tag), so there's no "fast path vs slow path" — there's just one path.
 
-2. **The bridge must not be content-aware.** The moment the bridge looks at signal content to make routing decisions, it stops being a structural router and starts being a domain-aware service. That's the same architectural smell we removed when we pulled AgentGateway out of the dispatch path. The bridge knows about *structure* (capability tags, thread refs, DIDs). It must not know about *content*.
+2. **Second version:** swarm agent triages tagless signals, classifies them into capability tags, publishes a re-tagged signal that the bridge dispatches via its existing capability-matching fast path.
 
-The resolution: triage isn't a bridge function at all. It's an agent — specifically, a **swarm agent** that subscribes to the firehose, sees tagless signals as they appear, classifies them, and publishes a tagged signal in the same thread. The bridge then dispatches the tagged signal through its existing fast-path logic. The bridge gets *zero* new code for any of this.
+3. **Final version (this one):** capability tags don't exist as a routing primitive at all. The bridge routes by @-mention only. The swarm agent's job is to decide which agents should handle a signal and publish a routing reply that @-mentions them.
 
-This generalizes: triage is one of a class of "swarm skills" that operate on swarm artifacts. See the **Swarm agents as a skill runtime** section below for the full design.
+The reasoning that collapsed (2) into (3): **the agent card already says what an agent does**. Maintaining a parallel `capabilities` field on atproto profiles duplicates information that lives authoritatively in the A2A agent card. The swarm agent uses the cards directly as routing inputs (LLM tool-use), and the routing decision becomes "@these agents" rather than "tag this with these capabilities." Cleaner data model, smaller bridge, single source of truth.
 
-### Two classes of agents
+### Architectural principles (carrying forward)
 
-Established as a hard architectural principle going forward:
+- **The bridge knows about structure, never about content.** Capability tags, thread refs, mentions, DIDs — yes. What a signal *means* — no. Anything that requires reading what a signal says lives in a swarm agent.
+- **Two classes of agents:**
+  - **Domain agents** — A2A-only, protocol-naive. They do work. Adoption story: any team with an A2A endpoint can plug in.
+  - **Swarm agents** — atproto-aware, firehose-subscribing. They decide what work happens. Built by whoever operates the swarm.
+- **atproto is the source of truth for thread state.** Conversation history lives in the public thread. Agents stay stateless across turns; the bridge threads A2A correlation IDs (`taskId`, `contextId`) through reply records so agents can resume the same task on the next turn.
+- **AgentGateway has two valid roles in this architecture:** LLM router for the swarm agent (Phase 4, immediate), and registration onramp for domain agents (future direction, deferred). It is *never* in the A2A dispatch path.
 
-- **Domain agents** — protocol-naive, A2A-only. They do work (deliver, look up, calendar, code search). They never see atproto. Today's delivery agent is the canonical example. Adoption story: any team with an A2A endpoint can plug in.
-- **Swarm agents** — atproto-aware, firehose-subscribing. They decide what work should happen (triage, routing, summarization, dedup, correlation, severity tagging). They participate *in* the swarm rather than being dispatched *to*. These are intentional infrastructure built by whoever runs the swarm; they trade protocol-naivety for cross-cutting visibility.
+### What changes in the bridge
 
-The bridge's job stays exactly what it is: capability-tagged signal in → matching domain agents dispatched. Nothing more.
+The bridge gets simpler in some places and slightly more involved in one. Net change is small.
+
+**Removed:**
+- Capability matching (`FindByCapability`, the `Tags` field on `RegisteredAgent`, the per-signal capability-overlap logic)
+- The agent card fetch + tag merge in `handleAgentProfile` (the swarm agent does this for routing decisions; the bridge doesn't need it)
+- Most of the registry's data model — it shrinks to essentially `DID → a2aEndpoint` (a tiny cache, populated from profile records on the firehose, kept for fast mention-dispatch lookups)
+
+**Added:**
+- **Mention parsing.** Read the structured `mentions` field on incoming signals (handles or DIDs). This is *not* content parsing — `mentions` is a typed field on the lexicon, populated by whoever publishes the signal.
+- **Mention dispatch.** For each mention: resolve handle → DID (if needed) → endpoint (from cache), dispatch via A2A.
+- **Conversation context threading.** When dispatching a reply within an existing thread, the bridge fetches the parent record, reads the `a2a.contextId` and `a2a.agentDid` off it, and includes the contextId in the A2A `SendMessage` so the agent's task store continues the same task. On the response, the bridge captures the (possibly same, possibly new) taskId/contextId and stores them on the reply signal it publishes. This makes multi-turn chat work without giving the bridge any content awareness.
+
+The threading logic is purely structural: read parent record → pull correlation IDs off a typed field → pass through. The bridge never reads message content for routing or memory purposes.
+
+### What the swarm agent looks like
+
+A separate Python service in a new top-level `swarm-agent/` directory. Adapts the runtime structure from `~/projects/agent-skill-poc/runtime/` (skill loader + event bus + scheduler + FastAPI for monitoring) and adds a firehose subscription as a new event source. Skills register interest in firehose events with metadata-encoded activation conditions and run their behavior when those conditions match.
+
+Key choices:
+
+- **Python**, with [`uv`](https://github.com/astral-sh/uv) for environment management (matches the delivery agent and Solis POC).
+- **LLM calls go through AgentGateway** (`http://localhost:4000/watsonx` to start, routing to gpt-oss-120b on watsonx.ai). The runtime uses an OpenAI-compatible client pointed at the gateway. Model identity is invisible to the runtime — gateway picks the backend.
+- **Skills can use `langgraph.prebuilt.create_react_agent`** for their internal tool-use loop, the same way `~/projects/agent-skill-poc/mock-agents/data_agent.py` does. This is *inside* a skill, not at the runtime layer. The runtime stays a thin event-driven loop.
+- **Skills follow the [agentskills.io](https://agentskills.io) specification.** A skill is a directory containing at minimum a `SKILL.md` (YAML frontmatter + Markdown body), and optionally `scripts/`, `references/`, `assets/`, or any other files the skill needs. Required frontmatter fields: `name` and `description`. Runtime-specific configuration (activation conditions, trigger type) lives in the spec's optional `metadata` field under a `swarm.*` namespace, so skills remain spec-conformant. We don't introduce a sidecar config file alongside `SKILL.md` — anything runtime-specific goes in `metadata`.
+- **The swarm agent has its own DID** (`swarm-agent.test` or similar) and publishes signals like any other participant.
 
 ### Work
 
-1. **CLI for humans.** Replaces the curl ceremony in the runbook. Optimized for fast capture, free-text first, terse output, retrievable threads. This is how humans actually post — and now that triage is going to live in a swarm agent, the human-posting flow is the prerequisite for the swarm agent to be useful, not the other way around.
+1. **Lexicon updates** (done as part of this phase's prep):
+   - `community.swarm.signal`: add `mentions` field (array of handles/DIDs), add `a2a` field (object with `agentDid`, `taskId`, `contextId`) for result signals, add `routing` to the `type` knownValues, mark `capabilities` as deprecated.
+   - `community.swarm.agent.profile`: drop the required `capabilities` field (mark deprecated), make `a2aEndpoint` required, update description to clarify the agent card is the source of truth for what the agent does.
 
-2. **Swarm-agent runtime.** New service (likely a separate Go binary, or a small Python service if we want to lean on the LLM ecosystem). Reuses the bridge's firehose subscription code (extract a small shared package). Loads skills from a directory at startup. Subscribes to the firehose, decides per-event which (if any) skills to activate, publishes resulting signals back to the PDS under its own DID. Knows nothing about specific skills — it's a host, not a classifier.
+2. **CLI for humans.** Go binary in `cmd/murmur/`. Optimized for fast capture, free-text first, terse output, thread retrieval. Writes signals with the structured `mentions` field when the user types `@handle`. Reads threads (root + all replies) for browse mode. Reuses the bridge's PDS auth code where it makes sense.
 
-3. **Triage skill.** First skill, validates the runtime end to end. Activation: any signal from a human DID that has no capability tags. Action: classify the content (LLM call or hand-written rules), publish a routing signal in the same thread carrying the inferred tags. The bridge then dispatches via its existing fast-path. The thread reads as a clear trace: human ask → triage decision → domain agent answer.
+3. **Bridge refactor.** Three parts, smaller than they sound:
+   - Rip out capability matching (delete `FindByCapability`, the `Tags` field, the `handleSignal` matching logic, the agent card fetch in `handleAgentProfile`, the tag merge).
+   - Add mention dispatch: parse `mentions`, resolve, dispatch.
+   - Add conversation context threading: walk parent record on replies, pull `a2a.contextId`, pass to `sendA2ATask`, capture and persist on the published reply.
 
-4. **Mentions as direct dispatch.** `@agent-name.test` in a signal should route directly to that agent, bypassing capability matching. This stays in the bridge (it's structural — handle resolution and direct dispatch, no content reasoning). Useful for the human-posting flow when you *do* know who to ask.
+4. **AgentGateway back into docker-compose.** Different role from before: LLM router on port 4000. Config lifted from `~/projects/agent-skill-poc/infra/agent-gateway/config.yaml` (the `binds[1]` block — port 4000, the LLM routing). Watsonx route uses `provider.openAI` so the swarm agent talks to it via the OpenAI Python SDK with a custom `base_url`. Update `docker-compose.yml`'s comment block to reflect the new role.
 
-5. **A second swarm skill** to validate the runtime is genuinely skill-pluggable. Probably summarization (when a thread crosses N replies, post a checkpoint summary) — exercises a different activation pattern (thread state, not single event) and is genuinely useful.
+5. **Swarm-agent runtime** in a new `swarm-agent/` directory. Python, `uv`. Adapts the Solis runtime structure: skill loader, event bus, FastAPI app for status/monitoring. New piece: a firehose subscriber that emits events into the bus when signals match skill activation criteria. Skills loaded from `swarm-agent/skills/`. Authenticates to the PDS as its own account (`swarm-agent.test`) so it can publish.
 
-6. **Multi-agent scenarios.** Post signals that match multiple domain agents. Observe how "dispatch to all" works in practice. Now also exercises swarm-skill-plus-domain-agent threads.
+6. **Triage skill** as the first skill. Activation: signal from a human DID, no `mentions`. Action: LLM call (via gateway) with the signal content + the list of available agents (built from profile records + each agent's A2A card description) presented as tools. The LLM picks which agents should handle the signal. The skill publishes a `type: routing` reply in the thread carrying the new `mentions`. The bridge sees the reply and dispatches.
+
+7. **End-to-end test:** Carlos posts via CLI with no mention → swarm agent triages → publishes routing reply → bridge dispatches → domain agent answers → Carlos replies as a follow-up → bridge threads conversation context → domain agent continues the same task.
+
+8. **A second swarm skill** to validate skill-pluggability. Probably `summarize-thread` (activated when a thread crosses N replies). Exercises a different activation pattern.
+
+9. **Multi-agent threads.** Post signals where triage decides multiple agents are relevant. Observe how the conversation reads.
 
 ### What We'll Discover
 
-- Whether autonomous LLM-driven activation (every firehose event = "is this skill relevant?") is cost-tractable, or whether we need cheap pre-filters via skill metadata
-- How the routing-via-published-signal pattern feels in practice (clarity vs. noise in the thread)
-- Whether the runtime needs explicit loop protection beyond own-DID dedup (e.g., a `triagedFrom` field on routing signals so triage doesn't classify its own output)
-- How threads with multiple swarm skills firing on the same signal compose
-- Whether the agentskills.io spec's progressive-disclosure model fits autonomous use as cleanly as it fits interactive coding agents
+- Whether mention-only routing feels expressive enough in practice, or whether some kind of "broadcast to all monitoring agents" pattern needs to come back as a non-tag mechanism
+- How conversation continuity feels across longer threads — particularly whether the bridge's per-reply parent fetch is fast enough or wants caching
+- Whether the swarm agent's tool-use approach to picking agents (LLM looks at agent card descriptions) actually picks the right agents, or whether we need richer hints
+- Whether autonomous activation cost is tractable (every firehose event from a human → potentially an LLM call) and whether metadata pre-filters do enough work
+- How loops are best prevented in practice: own-DID dedup is necessary but probably not sufficient — we may want sender-class filters or provenance fields on routing replies
 
 ---
 
@@ -230,7 +270,7 @@ Recorded so future-us doesn't re-derive it. The Phase 4 section above is the "wh
 
 ### Recap of the principle
 
-The bridge is structurally dumb: it knows about capability tags and thread refs, never about content. Anything that requires reading what a signal *says* — triage, classification, summarization, dedup, correlation, severity tagging — lives outside the bridge.
+The bridge is structurally dumb: it knows about mentions, thread refs, and A2A correlation IDs — never about content. Anything that requires reading what a signal *says* — triage, classification, summarization, dedup, correlation, severity tagging — lives outside the bridge.
 
 That work happens in **swarm agents**: agents that subscribe to the firehose, see signals as they appear, and publish new signals in response. They're atproto-aware by necessity (they can't be protocol-naive and still have firehose visibility), and they're built deliberately by whoever runs the swarm. They are *of* the swarm, not just *in* it.
 
@@ -268,38 +308,42 @@ We want our skills to conform to the [Agent Skills](https://agentskills.io) spec
 
 #### What the spec gives us
 
-A skill is a directory containing at minimum a `SKILL.md` file (YAML frontmatter + Markdown body), with optional `scripts/`, `references/`, `assets/` subdirectories. Required frontmatter fields: `name` (1-64 chars, lowercase + hyphens, must match parent dir) and `description` (1-1024 chars, what the skill does + when to use it). Optional: `license`, `compatibility`, `metadata` (arbitrary key-value), `allowed-tools` (experimental).
+A skill is a directory containing at minimum a `SKILL.md` file (YAML frontmatter + Markdown body), and optionally `scripts/`, `references/`, `assets/`, or any other files the skill needs. Required frontmatter fields: `name` (1-64 chars, lowercase letters, numbers, and hyphens; no leading, trailing, or consecutive hyphens; must match the parent directory name) and `description` (1-1024 chars; should describe what the skill does and when to use it). Optional frontmatter fields: `license`, `compatibility` (1-500 chars), `metadata` (a map of string keys to string values, intended for client-specific extensions), and `allowed-tools` (experimental).
 
-The spec assumes **progressive disclosure**: metadata loads at startup for all skills (~100 tokens each), the full SKILL.md body loads only when a skill is activated, and resources load on demand. This is the model that lets a host scale to many skills without paying their context cost up front.
+The spec describes a **progressive disclosure** loading model: the frontmatter (name and description, ~100 tokens per skill) is loaded at startup for all skills, the full `SKILL.md` body is loaded only when a host decides to activate the skill, and any resources under `scripts/`, `references/`, or `assets/` are loaded on demand. This is what lets a host scale to many skills without paying their context cost up front.
 
 #### Where we extend the spec (carefully)
 
-The spec was designed for **interactive LLM agent hosts** — tools where a user gives the agent a task, the agent looks at skill descriptions, decides which to load, then proceeds. Activation is implicit in the description ("use this skill when the user asks about PDFs").
+The spec defines a packaging and discovery format. It does *not* prescribe how a host decides when to activate a skill — that's left to the host. In practice, existing hosts (Claude Code, Goose, Cursor, and others on the agentskills.io adoption list) tend to drive activation by matching the user's current task against skill descriptions: the agent looks at descriptions, decides which are relevant, loads them, and proceeds. That works for interactive agents where every activation is in response to a user prompt.
 
-Our use is **autonomous event processing**: every firehose event is a potential trigger, and we can't afford to do full LLM reasoning ("which skills are relevant?") on every commit message. We need cheap pre-filtering.
+Our use is **autonomous event processing**: every firehose event is a potential trigger, and asking the LLM "which skills are relevant?" on every commit message would be expensive. We need cheap pre-filtering before any LLM call.
 
-The spec accommodates this through the `metadata` field, which is explicitly an arbitrary map for client-specific extensions. We'd define a small set of conventional keys under a swarm-namespaced prefix:
+The spec accommodates this through the `metadata` field, which it defines as a map of string keys to string values that "clients can use to store additional properties not defined by the Agent Skills spec." We define conventional keys under a `swarm.*` namespace:
 
 ```yaml
 ---
 name: triage
-description: Classify untagged signals from human users and publish a routing signal in the same thread with inferred capability tags. Use when a signal has no capability tags and originates from a human DID.
+description: Decide which agents should handle a signal that has no explicit @-mentions, and publish a routing reply in the same thread that @-mentions them. Use when a signal arrives without mentions and is from a human user.
 metadata:
-  swarm.activation.collection: community.swarm.signal
-  swarm.activation.condition: no-capabilities
-  swarm.activation.sender-class: human
+  swarm.activation.event: "signal_received"
+  swarm.activation.sender-class: "human"
+  swarm.activation.has-mentions: "false"
 ---
 ```
 
-The runtime checks the `swarm.activation.*` metadata cheaply (no LLM call) on every firehose event and only loads the skill body and invokes the LLM for events that pass the prefilter. Skills without `swarm.activation.*` metadata fall back to spec-default behavior: the runtime asks the LLM "is this skill relevant?" using the description.
+(Values are quoted strings because the spec restricts metadata values to strings.)
 
-The extension lives entirely in the `metadata` field, so skills remain spec-conformant. Other agentskills-compatible hosts that don't understand `swarm.activation.*` would simply ignore it and use the description-based activation path.
+The runtime indexes these on startup, evaluates them cheaply against every firehose event, and only loads a skill's body and invokes an LLM for events that pass the prefilter. Skills without `swarm.activation.*` metadata fall back to whatever default activation strategy the runtime implements (likely description-based matching, the same approach existing interactive hosts use).
+
+Because the extension lives entirely in the spec-defined `metadata` field, skills remain spec-conformant. Any other agentskills-compatible host would parse the metadata as opaque key-value strings and ignore the keys it doesn't recognize.
+
+The spec's optional `scripts/`, `references/`, and `assets/` directories are available for skills that need bundled resources — we're not using them yet, but they're a natural place to grow into if atproto develops interactive primitives (button responses, rich render types, etc.) that warrant skill-bundled assets.
 
 ### Routing as published signals (the thread is the trace)
 
-The triage skill (and any other routing-style skill) doesn't return its decision through some private channel. It **publishes a signal** in the same thread carrying the inferred capabilities. The bridge sees that signal on the firehose and dispatches via its existing fast path. The thread becomes a self-documenting trace of "human asked → triage classified → domain agent answered," all signed and durable.
+The triage skill (and any other routing-style skill) doesn't return its decision through some private channel. It **publishes a `type: routing` signal** in the same thread carrying the inferred `mentions`. The bridge sees that signal on the firehose, parses the mentions, and dispatches. The thread becomes a self-documenting trace of "human asked → triage decided who → domain agent answered," all signed and durable.
 
-This means the bridge needs no special handling for swarm-skill output. Routing signals are just signals with capabilities. The fact that a swarm skill produced them is invisible to the bridge — and that's the goal.
+The bridge needs almost no special handling for routing signals. They're just signals with `mentions` set, and the bridge already knows how to dispatch on mentions. The `type: routing` value is informational — it lets thread readers (humans, AppViews) distinguish a routing decision from a substantive reply, but the bridge doesn't branch on it.
 
 ### Concerns to design around
 
@@ -321,27 +365,29 @@ A first-pass shape, not a final design:
 
 ```
 swarm-agent/
-├── cmd/swarm-agent/
-│   ├── main.go            # firehose subscription, dispatch loop
-│   ├── skills.go          # skill loader, metadata index, activation
-│   ├── llm.go             # LLM client (Anthropic SDK)
-│   └── publish.go         # PDS client for publishing signals
+├── runtime/
+│   ├── main.py            # entry point: load skills, wire bus, subscribe firehose, run
+│   ├── skill_loader.py    # discover and parse SKILL.md files (frontmatter + body)
+│   ├── event_bus.py       # pub/sub for firehose events and inter-skill triggers
+│   ├── firehose.py        # atproto firehose subscription, emits events into the bus
+│   ├── publisher.py       # PDS client for publishing signals as the swarm agent's DID
+│   ├── llm.py             # OpenAI-compatible client pointed at AgentGateway
+│   └── api.py             # FastAPI app for status/monitoring
 ├── skills/
 │   ├── triage/
-│   │   ├── SKILL.md
-│   │   └── references/
-│   │       └── capability-taxonomy.md
+│   │   └── SKILL.md
 │   └── summarize-thread/
 │       └── SKILL.md
-└── go.mod
+├── pyproject.toml         # uv-managed
+└── README.md
 ```
 
-The runtime starts by indexing all skills under `skills/` (loading just the frontmatter, per progressive disclosure). For each firehose event, it checks the metadata pre-filters against the event, collects matching skills, loads their bodies, invokes the LLM with the event content + skill instructions, and publishes whatever signal(s) the LLM produces. The LLM is the thing doing the actual reasoning; the runtime is the plumbing.
+The runtime starts by indexing all skills under `skills/` (loading just the frontmatter, per progressive disclosure). The firehose subscriber emits a `signal_received` event into the bus on each new signal commit; subscribed skills evaluate their `swarm.activation.*` metadata against the event and run if matched. Skill execution loads the body, invokes the LLM via the gateway-routed client (with tool-use access to "available agents" derived from profile records), and publishes any resulting signals. Self-DID dedup prevents the swarm agent from acting on its own posts.
 
-The runtime's own DID would be something like `swarm-agent.test` (or per-skill DIDs if we want per-skill attribution — that's a later decision).
+The runtime's own DID is `swarm-agent.test` (per-skill DIDs would give better attribution but are a later decision; for now everything is signed by the runtime's identity).
 
 ### What this implies for nearer-term work
 
-- **Phase 4 is now structured around this design** — see the rewritten Phase 4 above for the build order.
-- **No bridge changes are required** for any of this. The bridge stays exactly as it is. That's the cleanest possible outcome and it's the clearest sign the architecture is right.
-- **The skill format constraint affects what we build first.** Before writing the triage skill, we should pin a small number of capability tags as the canonical taxonomy (delivery, monitoring, calendar, etc.) so triage has something to classify *into*. Otherwise the first triage skill has to also invent the vocabulary, which conflates two different decisions.
+- **Phase 4 is structured around this design** — see the rewritten Phase 4 above for the build order.
+- **The bridge needs a small refactor** (not zero, as I claimed in an earlier version of this doc): mention parsing, mention dispatch, and conversation context threading. Capability matching gets ripped out. Net change is bridge code shrinks. The "no bridge changes" claim was wrong — capability tags going away is a bridge change too, just a subtractive one.
+- **Runtime configuration lives in `SKILL.md`'s `metadata` field**, not in a sidecar file. The spec's optional `scripts/`, `references/`, and `assets/` directories remain available for skills that need bundled resources; we just don't use them for runtime config.

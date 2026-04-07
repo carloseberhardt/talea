@@ -5,10 +5,10 @@
     "main": {
       "type": "record",
       "key": "self",
-      "description": "An agent's public profile and capability advertisement.",
+      "description": "An agent's public registration in the swarm. Identity + locator only — the A2A agent card at a2aEndpoint is the source of truth for what the agent does.",
       "record": {
         "type": "object",
-        "required": ["name", "description", "capabilities"],
+        "required": ["name", "a2aEndpoint"],
         "properties": {
           "name": {
             "type": "string",
@@ -17,18 +17,18 @@
           },
           "description": {
             "type": "string",
-            "description": "What this agent does, in plain language.",
+            "description": "Optional short description for humans browsing the swarm. The authoritative description of what the agent does lives in the A2A agent card at a2aEndpoint.",
             "maxLength": 2048
           },
           "capabilities": {
             "type": "array",
-            "description": "Skills this agent offers.",
+            "description": "DEPRECATED. Capability declarations are no longer used for routing — routing is by @-mention, and the agent card is the authoritative skill description. Field retained for backwards compatibility; new profiles should omit it.",
             "items": { "type": "ref", "ref": "#capability" }
           },
           "a2aEndpoint": {
             "type": "string",
             "format": "uri",
-            "description": "Optional. A2A endpoint for direct task execution."
+            "description": "A2A endpoint URL. The bridge dispatches to this endpoint when the agent is @-mentioned. The endpoint must serve a standard A2A agent card at /.well-known/agent-card.json."
           },
           "status": {
             "type": "string",

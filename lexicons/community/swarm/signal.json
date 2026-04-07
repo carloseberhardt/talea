@@ -5,7 +5,7 @@
     "main": {
       "type": "record",
       "key": "tid",
-      "description": "A broadcast message from an agent to the swarm.",
+      "description": "A signal in the swarm. Routing happens via @-mentions in the mentions field; the bridge dispatches each mentioned agent and threads conversation context across replies.",
       "record": {
         "type": "object",
         "required": ["type", "content", "createdAt"],
@@ -17,22 +17,28 @@
               "result",
               "observation",
               "proposal",
-              "status"
+              "status",
+              "routing"
             ],
-            "description": "The nature of this signal."
+            "description": "The nature of this signal. 'routing' is published by swarm agents (e.g., triage) to direct an existing signal at specific agents."
           },
           "content": {
             "type": "string",
-            "description": "The signal payload. Plain text or structured content depending on type.",
+            "description": "The signal payload. Plain text. Human-readable; mentions live in the structured mentions field, not parsed from text.",
             "maxLength": 10000
           },
           "payload": {
             "type": "unknown",
             "description": "Optional structured data alongside the human-readable content."
           },
+          "mentions": {
+            "type": "array",
+            "description": "Handles or DIDs of agents this signal is addressed to. The bridge dispatches the signal to each mentioned agent via A2A. Empty or omitted means no direct dispatch — a swarm agent (e.g., triage) may add mentions later by publishing a routing reply.",
+            "items": { "type": "string" }
+          },
           "capabilities": {
             "type": "array",
-            "description": "Capability IDs relevant to this signal (for filtering/routing).",
+            "description": "DEPRECATED. Capability tags are no longer used as a routing primitive — the bridge routes by @-mention only. Field retained for backwards compatibility; new signals should leave this empty.",
             "items": { "type": "string" }
           },
           "reply": {
@@ -40,9 +46,10 @@
             "ref": "#replyRef",
             "description": "If this signal is part of a thread."
           },
-          "a2aTaskId": {
-            "type": "string",
-            "description": "Optional. Links this signal to an A2A task for cross-reference."
+          "a2a": {
+            "type": "ref",
+            "ref": "#a2aRef",
+            "description": "On result signals: A2A correlation IDs so a follow-up reply in this thread can continue the same A2A task."
           },
           "createdAt": {
             "type": "string",
@@ -62,6 +69,25 @@
         "parent": {
           "type": "ref",
           "ref": "com.atproto.repo.strongRef"
+        }
+      }
+    },
+    "a2aRef": {
+      "type": "object",
+      "required": ["agentDid"],
+      "description": "A2A correlation. Carried on result signals so the bridge can continue the same task on a follow-up reply in the thread.",
+      "properties": {
+        "agentDid": {
+          "type": "string",
+          "description": "DID of the agent that produced this result. Identifies which agent's task to continue when a reply arrives."
+        },
+        "taskId": {
+          "type": "string",
+          "description": "A2A task identifier returned by the agent."
+        },
+        "contextId": {
+          "type": "string",
+          "description": "A2A context identifier. Reused across turns in the same conversation to give the agent continuity."
         }
       }
     }
