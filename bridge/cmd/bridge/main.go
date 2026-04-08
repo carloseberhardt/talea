@@ -324,14 +324,7 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 	signalType, _ := record["type"].(string)
 	content, _ := record["content"].(string)
 
-	var capabilities []string
-	if caps, ok := record["capabilities"].([]any); ok {
-		for _, c := range caps {
-			if s, ok := c.(string); ok {
-				capabilities = append(capabilities, s)
-			}
-		}
-	}
+	mentions := extractMentions(record)
 
 	uri := fmt.Sprintf("at://%s/%s/%s", did, signalCollection, rkey)
 
@@ -339,24 +332,25 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 		"uri", uri,
 		"from", did,
 		"type", signalType,
-		"content", content,
-		"capabilities", capabilities,
+		"mentions", mentions,
 	)
 
-	if len(capabilities) == 0 {
-		b.logger.Info("signal has no capability tags — skipping (slow path not implemented)")
+	if len(mentions) == 0 {
+		// Tagless signals get picked up by swarm agents (e.g., triage), not the bridge.
 		return
 	}
 
-	// Find matching agents
-	agents := b.registry.FindByCapability(capabilities)
-	if len(agents) == 0 {
-		b.logger.Info("no agents match capabilities", "capabilities", capabilities)
-		return
-	}
+	// Resolve mentions to registered agents and dispatch.
+	for _, mention := range mentions {
+		agent := b.resolveMention(mention)
+		if agent == nil {
+			b.logger.Warn("mention does not resolve to a registered agent",
+				"mention", mention,
+				"signal_uri", uri,
+			)
+			continue
+		}
 
-	// Dispatch to all matching agents (v0 strategy: let them all respond)
-	for _, agent := range agents {
 		b.logger.Info("dispatching to agent",
 			"agent", agent.Name,
 			"handle", agent.Handle,
@@ -390,6 +384,32 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 	}
 }
 
+// extractMentions reads the structured `mentions` field off a signal record.
+// Mentions are handles or DIDs; the bridge does not parse mentions out of
+// content text — that's the publisher's job.
+func extractMentions(record map[string]any) []string {
+	raw, ok := record["mentions"].([]any)
+	if !ok {
+		return nil
+	}
+	var mentions []string
+	for _, m := range raw {
+		if s, ok := m.(string); ok && s != "" {
+			mentions = append(mentions, s)
+		}
+	}
+	return mentions
+}
+
+// resolveMention looks up a mention (handle or DID) in the registry. Returns
+// nil if no registered agent matches.
+func (b *Bridge) resolveMention(mention string) *RegisteredAgent {
+	if strings.HasPrefix(mention, "did:") {
+		return b.registry.FindByDID(mention)
+	}
+	return b.registry.FindByHandle(mention)
+}
+
 // --- Agent profile discovery ---
 
 func (b *Bridge) handleAgentProfile(ctx context.Context, did string, record map[string]any) {
@@ -400,50 +420,18 @@ func (b *Bridge) handleAgentProfile(ctx context.Context, did string, record map[
 		return
 	}
 
-	// Extract capability tags from the atproto profile
-	var profileTags []string
-	if caps, ok := record["capabilities"].([]any); ok {
-		for _, c := range caps {
-			if capMap, ok := c.(map[string]any); ok {
-				if id, ok := capMap["id"].(string); ok {
-					profileTags = append(profileTags, id)
-				}
-			}
-		}
-	}
-
 	b.logger.Info("discovered agent profile",
 		"did", did,
 		"name", name,
 		"endpoint", endpoint,
-		"profile_tags", profileTags,
 	)
 
-	// Liveness check: fetch the A2A agent card. If unreachable, refuse to
-	// register — dispatching to an agent we can't reach would just generate
-	// failures. The card is also the source of truth for skill tags, which
-	// we merge with the profile-declared tags.
-	cardTags, err := b.fetchAgentCardTags(ctx, endpoint)
-	if err != nil {
-		b.logger.Warn("agent card unreachable — skipping registration",
-			"did", did,
-			"name", name,
-			"endpoint", endpoint,
-			"error", err,
-		)
-		return
-	}
-
-	// Merge: profile tags + agent card tags, deduplicated
-	tags := mergeTags(profileTags, cardTags)
-
-	b.logger.Info("agent tags resolved",
-		"did", did,
-		"name", name,
-		"profile_tags", profileTags,
-		"card_tags", cardTags,
-		"merged_tags", tags,
-	)
+	// We deliberately do NOT gate registration on a liveness check. An agent
+	// that's briefly down at bridge-restart time used to get permanently
+	// dropped from the registry, which is worse than the protection the
+	// liveness check was supposed to provide. Dispatch already handles
+	// unreachable endpoints visibly (logs an error, moves on), so the
+	// registration-time check was redundant and harmful.
 
 	handle := b.resolveHandle(ctx, did)
 
@@ -452,7 +440,6 @@ func (b *Bridge) handleAgentProfile(ctx context.Context, did string, record map[
 		Name:            name,
 		Handle:          handle,
 		A2AEndpoint:     endpoint,
-		Tags:            tags,
 		ManagedByBridge: false, // self-published; bridge-minted profiles will set true
 	})
 }
@@ -464,63 +451,6 @@ func (b *Bridge) handleAgentProfileDelete(did string) {
 	if removed := b.registry.Remove(did); !removed {
 		b.logger.Debug("profile delete for unknown agent", "did", did)
 	}
-}
-
-// fetchAgentCardTags fetches the agent's A2A card and extracts skill tags.
-// Returns an error if the card can't be retrieved or parsed — callers should
-// treat that as a liveness failure and refuse to register the agent.
-func (b *Bridge) fetchAgentCardTags(ctx context.Context, endpoint string) ([]string, error) {
-	cardURL := endpoint + "/.well-known/agent-card.json"
-
-	req, err := http.NewRequestWithContext(ctx, "GET", cardURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", cardURL, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%s returned HTTP %d", cardURL, resp.StatusCode)
-	}
-
-	var card struct {
-		Skills []struct {
-			Tags []string `json:"tags"`
-		} `json:"skills"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
-		return nil, fmt.Errorf("decode agent card: %w", err)
-	}
-
-	var tags []string
-	for _, skill := range card.Skills {
-		tags = append(tags, skill.Tags...)
-	}
-	return tags, nil
-}
-
-func mergeTags(a, b []string) []string {
-	seen := make(map[string]bool)
-	var merged []string
-	for _, t := range a {
-		lower := strings.ToLower(t)
-		if !seen[lower] {
-			seen[lower] = true
-			merged = append(merged, t)
-		}
-	}
-	for _, t := range b {
-		lower := strings.ToLower(t)
-		if !seen[lower] {
-			seen[lower] = true
-			merged = append(merged, t)
-		}
-	}
-	return merged
 }
 
 // --- PDS interaction: publish reply signals ---

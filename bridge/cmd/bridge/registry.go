@@ -7,12 +7,15 @@ import (
 )
 
 // RegisteredAgent represents an agent the bridge knows about and can route to.
+// The bridge keeps just enough to dispatch by @-mention: handle/DID resolution
+// and the A2A endpoint to dispatch to. Skill descriptions, tags, and richer
+// metadata live in the agent's A2A card and are fetched on demand by whoever
+// needs them (e.g., the swarm agent for routing decisions).
 type RegisteredAgent struct {
-	DID         string   // atproto DID of the agent's PDS account
-	Name        string   // human-readable name
-	Handle      string   // atproto handle (e.g., "agent-one.test")
-	A2AEndpoint string   // URL for A2A task dispatch
-	Tags        []string // capability/skill tags for matching
+	DID         string // atproto DID of the agent's PDS account
+	Name        string // human-readable name (kept for logging)
+	Handle      string // atproto handle (e.g., "agent-one.test")
+	A2AEndpoint string // URL for A2A task dispatch
 
 	// ManagedByBridge is true if the bridge minted this agent's atproto identity
 	// and is responsible for its profile lifecycle (the gateway-as-onramp future
@@ -23,9 +26,9 @@ type RegisteredAgent struct {
 	ManagedByBridge bool
 }
 
-// AgentRegistry maintains a mapping from capability tags to agents.
-// Agents are discovered dynamically from community.swarm.agent.profile records
-// on the firehose, and optionally enriched from their A2A agent cards.
+// AgentRegistry maintains a DID → endpoint cache used for @-mention dispatch.
+// Agents are discovered from community.swarm.agent.profile records on the
+// firehose (live updates) and via PDS startup backfill.
 type AgentRegistry struct {
 	mu     sync.RWMutex
 	agents map[string]*RegisteredAgent // keyed by DID
@@ -46,16 +49,15 @@ func (r *AgentRegistry) Upsert(agent RegisteredAgent) {
 
 	existing, ok := r.agents[agent.DID]
 	if ok {
-		r.logger.Info("agent updated", "name", agent.Name, "did", agent.DID, "endpoint", agent.A2AEndpoint, "tags", agent.Tags)
+		r.logger.Info("agent updated", "name", agent.Name, "did", agent.DID, "handle", agent.Handle, "endpoint", agent.A2AEndpoint)
 	} else {
-		r.logger.Info("agent registered", "name", agent.Name, "did", agent.DID, "endpoint", agent.A2AEndpoint, "tags", agent.Tags)
+		r.logger.Info("agent registered", "name", agent.Name, "did", agent.DID, "handle", agent.Handle, "endpoint", agent.A2AEndpoint)
 		existing = &RegisteredAgent{}
 	}
 
 	existing.DID = agent.DID
 	existing.Name = agent.Name
 	existing.A2AEndpoint = agent.A2AEndpoint
-	existing.Tags = agent.Tags
 	existing.ManagedByBridge = agent.ManagedByBridge
 	if agent.Handle != "" {
 		existing.Handle = agent.Handle
@@ -76,20 +78,6 @@ func (r *AgentRegistry) Remove(did string) bool {
 	delete(r.agents, did)
 	r.logger.Info("agent removed", "name", agent.Name, "did", did)
 	return true
-}
-
-// FindByCapability returns all agents that match any of the given capability tags.
-func (r *AgentRegistry) FindByCapability(capabilities []string) []RegisteredAgent {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var matches []RegisteredAgent
-	for _, agent := range r.agents {
-		if tagsOverlap(agent.Tags, capabilities) {
-			matches = append(matches, *agent)
-		}
-	}
-	return matches
 }
 
 // FindByDID returns an agent by its atproto DID, or nil if not found.
@@ -130,13 +118,3 @@ func (r *AgentRegistry) All() []RegisteredAgent {
 	return all
 }
 
-func tagsOverlap(a, b []string) bool {
-	for _, tagA := range a {
-		for _, tagB := range b {
-			if strings.EqualFold(tagA, tagB) {
-				return true
-			}
-		}
-	}
-	return false
-}
