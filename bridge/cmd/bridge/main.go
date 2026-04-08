@@ -35,6 +35,10 @@ type Bridge struct {
 	bridgeDID string
 	registry *AgentRegistry
 
+	// Triage agent: looked up by handle in the registry. The bridge calls it
+	// over A2A when a tagless signal arrives with no continuation context.
+	triageHandle string
+
 	// PDS auth
 	accessToken string
 	handle      string
@@ -49,16 +53,18 @@ func main() {
 	bridgeHandle := envOrDefault("BRIDGE_HANDLE", "bridge.test")
 	bridgePassword := envOrDefault("BRIDGE_PASSWORD", "bridge-sandbox-pass")
 	discoveryAddr := envOrDefault("DISCOVERY_ADDR", ":2471")
+	triageHandle := envOrDefault("TRIAGE_HANDLE", "triage.test")
 
 	registry := NewAgentRegistry(logger)
 
 	b := &Bridge{
-		logger:   logger,
-		relayURL: relayURL,
-		pdsURL:   pdsURL,
-		registry: registry,
-		handle:   bridgeHandle,
-		password: bridgePassword,
+		logger:       logger,
+		relayURL:     relayURL,
+		pdsURL:       pdsURL,
+		registry:     registry,
+		triageHandle: triageHandle,
+		handle:       bridgeHandle,
+		password:     bridgePassword,
 	}
 
 	if err := b.authenticate(); err != nil {
@@ -81,6 +87,7 @@ func main() {
 		"relay", relayURL,
 		"pds", pdsURL,
 		"discovery", discoveryAddr,
+		"triage_handle", triageHandle,
 		"did", b.bridgeDID,
 		"registered_agents", len(registry.All()),
 	)
@@ -377,11 +384,34 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 		}
 	}
 
+	// Triage: if still no mentions, the signal needs LLM-based routing.
+	// Call the triage agent over A2A and use whatever it returns. Triage
+	// itself is a regular A2A agent registered via its atproto profile.
+	rootURI, rootCID := threadRoot(record, uri, cid)
 	if len(mentions) == 0 {
-		// No explicit mentions and no continuation context. The triage agent
-		// will handle these in a future iteration; for now the bridge drops
-		// them silently.
-		return
+		decision := b.callTriage(ctx, content)
+		if decision == nil {
+			return
+		}
+
+		// Publish a routing signal in the thread so the routing decision is
+		// visible to anyone reading the thread later. The bridge dedupes its
+		// own posts on the firehose, so this won't trigger re-dispatch.
+		if b.accessToken != "" && len(decision.Mentions) > 0 {
+			if err := b.publishRoutingSignal(ctx, uri, cid, rootURI, rootCID, decision.Mentions, decision.Rationale); err != nil {
+				b.logger.Error("failed to publish routing signal", "error", err)
+			}
+		}
+
+		if len(decision.Mentions) == 0 {
+			b.logger.Info("triage returned no mentions, dropping signal",
+				"signal_uri", uri,
+				"rationale", decision.Rationale,
+			)
+			return
+		}
+
+		mentions = decision.Mentions
 	}
 
 	// Resolve mentions to registered agents and dispatch.
@@ -435,21 +465,6 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 				TaskID:    result.TaskID,
 				ContextID: result.ContextID,
 			}
-			// Determine the thread root: if the incoming signal is itself a
-			// reply, carry its root forward; otherwise the incoming signal
-			// IS the root. Without this, multi-turn replies end up with a
-			// root pointing at the wrong record and break thread walks.
-			rootURI, rootCID := uri, cid
-			if reply, ok := record["reply"].(map[string]any); ok {
-				if root, ok := reply["root"].(map[string]any); ok {
-					if u, _ := root["uri"].(string); u != "" {
-						rootURI = u
-					}
-					if c, _ := root["cid"].(string); c != "" {
-						rootCID = c
-					}
-				}
-			}
 			if err := b.publishReplySignal(ctx, uri, cid, rootURI, rootCID, agent.Name, result.Text, ref); err != nil {
 				b.logger.Error("failed to publish reply signal",
 					"agent", agent.Name,
@@ -458,6 +473,64 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 			}
 		}
 	}
+}
+
+// threadRoot computes the (root URI, root CID) for replies the bridge is
+// about to publish in response to an incoming signal. If the incoming signal
+// is itself a reply, we carry its root forward; otherwise the incoming
+// signal IS the root.
+func threadRoot(record map[string]any, signalURI, signalCID string) (string, string) {
+	if reply, ok := record["reply"].(map[string]any); ok {
+		if root, ok := reply["root"].(map[string]any); ok {
+			u, _ := root["uri"].(string)
+			c, _ := root["cid"].(string)
+			if u != "" && c != "" {
+				return u, c
+			}
+		}
+	}
+	return signalURI, signalCID
+}
+
+// triageDecision is the JSON shape we expect back from the triage agent.
+type triageDecision struct {
+	Mentions  []string `json:"mentions"`
+	Rationale string   `json:"rationale"`
+}
+
+// callTriage dispatches the signal content to the triage agent over A2A and
+// returns its parsed routing decision. Returns nil if triage is not registered
+// or the call fails — the caller should drop the signal in that case.
+func (b *Bridge) callTriage(ctx context.Context, content string) *triageDecision {
+	agent := b.registry.FindByHandle(b.triageHandle)
+	if agent == nil {
+		b.logger.Warn("no mentions and triage agent not registered, dropping signal",
+			"triage_handle", b.triageHandle,
+		)
+		return nil
+	}
+
+	b.logger.Info("calling triage", "endpoint", agent.A2AEndpoint)
+	result, err := sendA2ATask(ctx, agent.A2AEndpoint, content, "")
+	if err != nil {
+		b.logger.Error("triage dispatch failed", "error", err)
+		return nil
+	}
+
+	var decision triageDecision
+	if err := json.Unmarshal([]byte(result.Text), &decision); err != nil {
+		b.logger.Warn("could not parse triage response as JSON",
+			"raw", result.Text,
+			"error", err,
+		)
+		return nil
+	}
+
+	b.logger.Info("triage decision",
+		"mentions", decision.Mentions,
+		"rationale", decision.Rationale,
+	)
+	return &decision
 }
 
 // a2aRef carries the A2A correlation IDs the bridge writes onto reply signals
@@ -623,6 +696,88 @@ func (b *Bridge) handleAgentProfileDelete(did string) {
 }
 
 // --- PDS interaction: publish reply signals ---
+
+// publishRoutingSignal writes a `routing` signal in the thread carrying the
+// triage decision: which agents to dispatch to and a brief rationale. The
+// bridge dispatches in parallel and dedupes its own posts on the firehose,
+// so this signal exists purely for audit visibility — anyone reading the
+// thread later can see how the routing decision was made.
+func (b *Bridge) publishRoutingSignal(ctx context.Context, parentURI, parentCID, rootURI, rootCID string, mentions []string, rationale string) error {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+
+	content := rationale
+	if content == "" {
+		content = "(no rationale)"
+	}
+
+	mentionsAny := make([]any, 0, len(mentions))
+	for _, m := range mentions {
+		mentionsAny = append(mentionsAny, m)
+	}
+
+	record := map[string]any{
+		"$type":     signalCollection,
+		"type":      "routing",
+		"content":   content,
+		"mentions":  mentionsAny,
+		"createdAt": now,
+		"reply": map[string]any{
+			"root": map[string]any{
+				"uri": rootURI,
+				"cid": rootCID,
+			},
+			"parent": map[string]any{
+				"uri": parentURI,
+				"cid": parentCID,
+			},
+		},
+	}
+
+	body := map[string]any{
+		"repo":       b.bridgeDID,
+		"collection": signalCollection,
+		"validate":   false,
+		"record":     record,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal routing signal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		b.pdsURL+"/xrpc/com.atproto.repo.createRecord",
+		bytes.NewReader(jsonBody),
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+b.accessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("PDS request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("PDS returned HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var created struct {
+		URI string `json:"uri"`
+	}
+	json.NewDecoder(resp.Body).Decode(&created)
+
+	b.logger.Info("routing signal published",
+		"uri", created.URI,
+		"parent", parentURI,
+		"mentions", mentions,
+	)
+	return nil
+}
 
 // publishReplySignal writes a `result` signal under the bridge's repo as a
 // reply in an existing thread. parentURI/parentCID point at the signal we're
