@@ -1,6 +1,72 @@
+# AgentGateway config — LLM routing only.
+#
+# In Phase 4 of murmur, AgentGateway is reintroduced solely as an LLM router
+# for the swarm-side agents (notably the triage agent). It is NOT in the A2A
+# dispatch path between the bridge and domain agents — see commit 8ec5424 and
+# IMPLEMENTATION.md for that history.
+#
+# Routes:
+#   /watsonx → gpt-oss-120b on IBM WatsonX (default for triage)
+#   /bedrock → mistral-large on AWS Bedrock (alternative)
+#
+# The provider blocks both expose an OpenAI-compatible API surface, so any
+# client (including the openai Python SDK with a custom base_url) can talk to
+# them with the same shape.
+#
+# Secrets ($WATSONX_API_KEY, $WATSONX_PROJECT_ID, AWS keys) come from the local
+# .env file picked up by docker-compose. NEVER COMMIT real values here.
+
 binds:
-- port: 3000
-  listeners:
-  - protocol: HTTP
-    name: a2a
-    routes: []
+  - port: 4000
+    listeners:
+      - name: llm
+        protocol: HTTP
+        routes:
+          - name: watsonx
+            matches:
+              - path:
+                  pathPrefix: /watsonx
+            backends:
+              - ai:
+                  name: opengpt-watsonx
+                  hostOverride: "us-south.ml.cloud.ibm.com:443"
+                  pathOverride: "/ml/v1/chat/completions?version=2024-05-31"
+                  provider:
+                    openAI:
+                      model: openai/gpt-oss-120b
+                  policies:
+                    backendAuth:
+                      key: "$WATSONX_API_KEY"
+                    backendTLS: {}
+            policies:
+              cors:
+                allowOrigins: ["*"]
+                allowHeaders: ["*"]
+              urlRewrite:
+                path:
+                  prefix: /
+              # WatsonX requires project_id in the request body (not URL or
+              # header). This CEL transformation injects it into every LLM
+              # request. Not visible in the gateway UI — runs at request time.
+              ai:
+                transformations:
+                  project_id: "'$WATSONX_PROJECT_ID'"
+
+          - name: bedrock
+            matches:
+              - path:
+                  pathPrefix: /bedrock
+            backends:
+              - ai:
+                  name: mistral-large-bedrock
+                  provider:
+                    bedrock:
+                      model: mistral.mistral-large-3-675b-instruct
+                      region: us-east-1
+            policies:
+              cors:
+                allowOrigins: ["*"]
+                allowHeaders: ["*"]
+              urlRewrite:
+                path:
+                  prefix: /

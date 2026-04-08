@@ -84,13 +84,29 @@ services:
     ports:
       - "2470:2470"
 
-  # AgentGateway is intentionally not in the dispatch path right now.
-  # The integration was proven in commit 26d86e1 but introduces a second
-  # registry that the bridge has to keep in sync with atproto profiles.
-  # Until we have a concrete need (observability, policy, LLM proxy) that
-  # the bridge alone can't satisfy, the bridge dispatches directly to the
-  # agent's a2aEndpoint. The agentgateway/ build context is preserved
-  # on disk so this can be re-enabled without re-deriving the config.
+  # AgentGateway — LLM router for Phase 4 swarm-side agents.
+  #
+  # NOTE: This is NOT the dispatch-path role we removed in commit 8ec5424.
+  # Gateway is here purely as an LLM proxy: the triage agent (and any other
+  # swarm-side agent that needs LLM access) talks to it on port 4000 instead
+  # of going direct to a model provider. Model selection becomes a config
+  # decision instead of code. The bridge still dispatches A2A traffic
+  # directly to each agent's a2aEndpoint — gateway is never on that path.
+  #
+  # Routes:
+  #   /watsonx → gpt-oss-120b on IBM WatsonX (default)
+  #   /bedrock → mistral-large on AWS Bedrock
+  #
+  # Secrets are read from a local .env file (gitignored).
+  agentgateway:
+    build: ./agentgateway
+    ports:
+      - "4000:4000"     # LLM listener
+    command: ["-f", "/config.yaml"]
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   plc-db-data:

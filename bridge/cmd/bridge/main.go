@@ -48,6 +48,7 @@ func main() {
 	pdsURL := envOrDefault("PDS_URL", "https://pds.murmur.internal")
 	bridgeHandle := envOrDefault("BRIDGE_HANDLE", "bridge.test")
 	bridgePassword := envOrDefault("BRIDGE_PASSWORD", "bridge-sandbox-pass")
+	discoveryAddr := envOrDefault("DISCOVERY_ADDR", ":2471")
 
 	registry := NewAgentRegistry(logger)
 
@@ -72,9 +73,14 @@ func main() {
 		logger.Warn("registry backfill failed — bridge will start with empty registry and rely on live firehose events", "error", err)
 	}
 
+	if err := b.startDiscoveryServer(ctx, discoveryAddr); err != nil {
+		logger.Error("failed to start discovery server", "error", err)
+	}
+
 	logger.Info("bridge starting",
 		"relay", relayURL,
 		"pds", pdsURL,
+		"discovery", discoveryAddr,
 		"did", b.bridgeDID,
 		"registered_agents", len(registry.All()),
 	)

@@ -1,4 +1,5 @@
 pds.env
+.env
 admin-password
 accounts/
 relay-src/
