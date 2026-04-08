@@ -335,8 +335,46 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 		"mentions", mentions,
 	)
 
+	// Fetch parent a2a info if this is a reply. We need it for two purposes:
+	//
+	// (1) Implicit chat continuation: if the user replied without explicit
+	//     mentions and the parent is an agent reply, the implicit target is
+	//     that agent. This is the "I replied in this thread, I'm continuing
+	//     with that agent" convention — analogous to how Slack/Discord treat
+	//     thread participants vs. channel posts.
+	//
+	// (2) Per-agent context continuity: when dispatching to an agent that
+	//     produced the parent reply, pass its contextId so the agent's task
+	//     store resumes the same conversation instead of starting fresh.
+	var parentA2A *a2aRef
+	if parentURI := parentURIOf(record); parentURI != "" {
+		a, err := b.fetchParentA2A(ctx, parentURI)
+		if err != nil {
+			b.logger.Warn("failed to fetch parent for routing/context",
+				"parent_uri", parentURI, "error", err)
+		}
+		parentA2A = a
+	}
+
+	// Implicit chat continuation: if no explicit mentions and the parent is
+	// an agent reply, treat that agent as the sole implicit mention. The
+	// per-mention dispatch loop below will then pick up the parent's
+	// contextId via the matching agentDid path, giving us continuity for free.
+	if len(mentions) == 0 && parentA2A != nil && parentA2A.AgentDID != "" {
+		if agent := b.registry.FindByDID(parentA2A.AgentDID); agent != nil {
+			b.logger.Info("implicit mention from parent agent",
+				"signal_uri", uri,
+				"agent", agent.Name,
+				"did", parentA2A.AgentDID,
+			)
+			mentions = []string{parentA2A.AgentDID}
+		}
+	}
+
 	if len(mentions) == 0 {
-		// Tagless signals get picked up by swarm agents (e.g., triage), not the bridge.
+		// No explicit mentions and no continuation context. The triage agent
+		// will handle these in a future iteration; for now the bridge drops
+		// them silently.
 		return
 	}
 
@@ -351,14 +389,23 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 			continue
 		}
 
+		// Continue the existing context only if the parent reply was from
+		// THIS agent. Otherwise start a fresh task — we don't want to feed
+		// agent A's contextId to agent B.
+		var contextID string
+		if parentA2A != nil && parentA2A.AgentDID == agent.DID {
+			contextID = parentA2A.ContextID
+		}
+
 		b.logger.Info("dispatching to agent",
 			"agent", agent.Name,
 			"handle", agent.Handle,
 			"dispatch_url", agent.A2AEndpoint,
 			"signal_uri", uri,
+			"context_id", contextID,
 		)
 
-		result, err := sendA2ATask(ctx, agent.A2AEndpoint, content)
+		result, err := sendA2ATask(ctx, agent.A2AEndpoint, content, contextID)
 		if err != nil {
 			b.logger.Error("A2A dispatch failed",
 				"agent", agent.Name,
@@ -369,12 +416,35 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 
 		b.logger.Info("A2A result received",
 			"agent", agent.Name,
-			"result", result,
+			"task_id", result.TaskID,
+			"context_id", result.ContextID,
+			"result", result.Text,
 		)
 
-		// Publish the result as a reply signal in the original thread
+		// Publish the result as a reply signal in the original thread,
+		// carrying the a2a correlation IDs so a follow-up reply can continue.
 		if b.accessToken != "" {
-			if err := b.publishReplySignal(ctx, uri, cid, agent.Name, result); err != nil {
+			ref := &a2aRef{
+				AgentDID:  agent.DID,
+				TaskID:    result.TaskID,
+				ContextID: result.ContextID,
+			}
+			// Determine the thread root: if the incoming signal is itself a
+			// reply, carry its root forward; otherwise the incoming signal
+			// IS the root. Without this, multi-turn replies end up with a
+			// root pointing at the wrong record and break thread walks.
+			rootURI, rootCID := uri, cid
+			if reply, ok := record["reply"].(map[string]any); ok {
+				if root, ok := reply["root"].(map[string]any); ok {
+					if u, _ := root["uri"].(string); u != "" {
+						rootURI = u
+					}
+					if c, _ := root["cid"].(string); c != "" {
+						rootCID = c
+					}
+				}
+			}
+			if err := b.publishReplySignal(ctx, uri, cid, rootURI, rootCID, agent.Name, result.Text, ref); err != nil {
 				b.logger.Error("failed to publish reply signal",
 					"agent", agent.Name,
 					"error", err,
@@ -382,6 +452,99 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 			}
 		}
 	}
+}
+
+// a2aRef carries the A2A correlation IDs the bridge writes onto reply signals
+// (per the community.swarm.signal lexicon's `a2a` field). On a follow-up reply
+// in the same thread, the bridge reads these off the parent record to continue
+// the same A2A task — this is what makes multi-turn chat work without making
+// the bridge content-aware.
+type a2aRef struct {
+	AgentDID  string
+	TaskID    string
+	ContextID string
+}
+
+// fetchParentA2A reads the `a2a` field off a parent signal record. Returns
+// nil (without error) if the parent has no a2a info — that's the normal case
+// for human-posted parents.
+func (b *Bridge) fetchParentA2A(ctx context.Context, parentURI string) (*a2aRef, error) {
+	rec, err := b.getRecord(ctx, parentURI)
+	if err != nil {
+		return nil, err
+	}
+
+	raw, ok := rec["a2a"].(map[string]any)
+	if !ok {
+		return nil, nil
+	}
+
+	ref := &a2aRef{}
+	if s, ok := raw["agentDid"].(string); ok {
+		ref.AgentDID = s
+	}
+	if s, ok := raw["taskId"].(string); ok {
+		ref.TaskID = s
+	}
+	if s, ok := raw["contextId"].(string); ok {
+		ref.ContextID = s
+	}
+
+	if ref.AgentDID == "" {
+		return nil, nil
+	}
+	return ref, nil
+}
+
+// getRecord fetches a single record by at:// URI from the PDS and returns its
+// value as a generic map.
+func (b *Bridge) getRecord(ctx context.Context, uri string) (map[string]any, error) {
+	parts := strings.SplitN(strings.TrimPrefix(uri, "at://"), "/", 3)
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid at:// uri: %s", uri)
+	}
+	did, collection, rkey := parts[0], parts[1], parts[2]
+
+	u := fmt.Sprintf("%s/xrpc/com.atproto.repo.getRecord?repo=%s&collection=%s&rkey=%s",
+		b.pdsURL, url.QueryEscape(did), collection, rkey)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("getRecord %s: HTTP %d: %s", uri, resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Value map[string]any `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode getRecord response: %w", err)
+	}
+	return result.Value, nil
+}
+
+// parentURIOf returns the immediate-parent URI from a signal record's reply
+// field, or empty string if the signal isn't a reply.
+func parentURIOf(record map[string]any) string {
+	reply, ok := record["reply"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	parent, ok := reply["parent"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	uri, _ := parent["uri"].(string)
+	return uri
 }
 
 // extractMentions reads the structured `mentions` field off a signal record.
@@ -455,7 +618,12 @@ func (b *Bridge) handleAgentProfileDelete(did string) {
 
 // --- PDS interaction: publish reply signals ---
 
-func (b *Bridge) publishReplySignal(ctx context.Context, rootURI string, rootCID string, agentName string, result string) error {
+// publishReplySignal writes a `result` signal under the bridge's repo as a
+// reply in an existing thread. parentURI/parentCID point at the signal we're
+// directly replying to (the one being processed); rootURI/rootCID point at
+// the original thread root, which may be the same as the parent if we're
+// replying to a top-level signal.
+func (b *Bridge) publishReplySignal(ctx context.Context, parentURI, parentCID, rootURI, rootCID, agentName, result string, ref *a2aRef) error {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 
 	record := map[string]any{
@@ -469,10 +637,26 @@ func (b *Bridge) publishReplySignal(ctx context.Context, rootURI string, rootCID
 				"cid": rootCID,
 			},
 			"parent": map[string]any{
-				"uri": rootURI,
-				"cid": rootCID,
+				"uri": parentURI,
+				"cid": parentCID,
 			},
 		},
+	}
+
+	// Carry A2A correlation so a follow-up reply in this thread can continue
+	// the same task. agentDid is required by the lexicon; the others are
+	// optional but in practice the SDK always returns them on a real dispatch.
+	if ref != nil && ref.AgentDID != "" {
+		a2aMap := map[string]any{
+			"agentDid": ref.AgentDID,
+		}
+		if ref.TaskID != "" {
+			a2aMap["taskId"] = ref.TaskID
+		}
+		if ref.ContextID != "" {
+			a2aMap["contextId"] = ref.ContextID
+		}
+		record["a2a"] = a2aMap
 	}
 
 	body := map[string]any{
@@ -515,7 +699,8 @@ func (b *Bridge) publishReplySignal(ctx context.Context, rootURI string, rootCID
 
 	b.logger.Info("reply signal published",
 		"uri", created.URI,
-		"in_reply_to", rootURI,
+		"parent", parentURI,
+		"root", rootURI,
 		"agent", agentName,
 	)
 	return nil

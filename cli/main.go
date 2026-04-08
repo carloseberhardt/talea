@@ -347,6 +347,138 @@ func cmdPost(args []string) int {
 	return 0
 }
 
+// ─── Subcommand: reply ────────────────────────────────────────
+
+func cmdReply(args []string) int {
+	var parentURI string
+	var content string
+	var explicitMentions []string
+	signalType := "request"
+
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "--mention" && i+1 < len(args):
+			explicitMentions = append(explicitMentions, args[i+1])
+			i += 2
+		case strings.HasPrefix(a, "--mention="):
+			explicitMentions = append(explicitMentions, strings.TrimPrefix(a, "--mention="))
+			i++
+		case a == "--type" && i+1 < len(args):
+			signalType = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--type="):
+			signalType = strings.TrimPrefix(a, "--type=")
+			i++
+		default:
+			if parentURI == "" {
+				parentURI = a
+			} else if content == "" {
+				content = a
+			} else {
+				content = content + " " + a
+			}
+			i++
+		}
+	}
+
+	if parentURI == "" || content == "" {
+		fmt.Fprintln(os.Stderr, "usage: murmur reply <parent-uri> \"<text>\" [--mention handle] [--type ...]")
+		return 1
+	}
+
+	cfg := loadConfig()
+	sess, err := authenticate(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "auth failed: %v\n", err)
+		return 1
+	}
+
+	// Fetch parent to get its CID and to determine the thread root.
+	// If the parent itself is a reply, carry forward its root. Otherwise the
+	// parent IS the root.
+	parent, err := getRecord(cfg, parentURI)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not fetch parent: %v\n", err)
+		return 1
+	}
+
+	rootURI := parent.URI
+	rootCID := parent.CID
+	if reply, ok := parent.Value["reply"].(map[string]any); ok {
+		if root, ok := reply["root"].(map[string]any); ok {
+			if u, _ := root["uri"].(string); u != "" {
+				rootURI = u
+			}
+			if c, _ := root["cid"].(string); c != "" {
+				rootCID = c
+			}
+		}
+	}
+
+	// Merge text-parsed mentions with explicit ones (text first, then explicit, dedup).
+	mentions := extractMentions(content)
+	seen := map[string]bool{}
+	for _, m := range mentions {
+		seen[m] = true
+	}
+	for _, m := range explicitMentions {
+		if !seen[m] {
+			seen[m] = true
+			mentions = append(mentions, m)
+		}
+	}
+
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	record := map[string]any{
+		"$type":     signalCollection,
+		"type":      signalType,
+		"content":   content,
+		"createdAt": now,
+		"reply": map[string]any{
+			"root": map[string]any{
+				"uri": rootURI,
+				"cid": rootCID,
+			},
+			"parent": map[string]any{
+				"uri": parent.URI,
+				"cid": parent.CID,
+			},
+		},
+	}
+	if len(mentions) > 0 {
+		record["mentions"] = mentions
+	}
+
+	body := map[string]any{
+		"repo":       sess.DID,
+		"collection": signalCollection,
+		"validate":   false,
+		"record":     record,
+	}
+
+	respBody, err := pdsPostAuthed(cfg, sess, "/xrpc/com.atproto.repo.createRecord", body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "createRecord failed: %v\n", err)
+		return 1
+	}
+
+	var created struct {
+		URI string `json:"uri"`
+		CID string `json:"cid"`
+	}
+	json.Unmarshal(respBody, &created)
+
+	fmt.Printf("replied %s\n", created.URI)
+	fmt.Printf("  in reply to: %s\n", parent.URI)
+	fmt.Printf("  thread root: %s\n", rootURI)
+	if len(mentions) > 0 {
+		fmt.Printf("  mentions: %s\n", strings.Join(mentions, ", "))
+	}
+	return 0
+}
+
 // ─── Subcommand: thread ───────────────────────────────────────
 
 func cmdThread(args []string) int {
@@ -601,6 +733,10 @@ commands:
       Post a top-level signal. @-mentions in the text are auto-extracted
       into the structured mentions field.
 
+  reply <parent-uri> "<text>" [--mention handle] [--type ...]
+      Post a reply to an existing signal. Inherits the thread root from
+      the parent. Same mention parsing as post.
+
   thread <signal-uri>
       Read a thread. Accepts any signal URI in the thread; walks to the
       root and prints all replies in time order, indented by depth.
@@ -629,6 +765,8 @@ func main() {
 	switch cmd {
 	case "post":
 		os.Exit(cmdPost(args))
+	case "reply":
+		os.Exit(cmdReply(args))
 	case "thread":
 		os.Exit(cmdThread(args))
 	case "agents":

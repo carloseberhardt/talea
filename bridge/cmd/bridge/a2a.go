@@ -8,49 +8,76 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 )
 
-// sendA2ATask sends a blocking SendMessage request to an A2A agent and returns the result text.
-func sendA2ATask(ctx context.Context, agentURL string, content string) (string, error) {
+// a2aDispatchResult is what sendA2ATask returns: the response text plus the
+// task and context IDs the agent assigned (or echoed back). The bridge stores
+// these on the published reply so a follow-up turn in the same thread can
+// continue the same conversation.
+type a2aDispatchResult struct {
+	Text      string
+	TaskID    string
+	ContextID string
+}
+
+// sendA2ATask sends a blocking SendMessage to an A2A agent. If contextID is
+// non-empty, it's set on the outgoing message — the agent's task store will
+// recognize it and resume the matching task instead of starting a new one.
+func sendA2ATask(ctx context.Context, agentURL, content, contextID string) (*a2aDispatchResult, error) {
 	endpoints := []*a2a.AgentInterface{
 		a2a.NewAgentInterface(agentURL, a2a.TransportProtocolJSONRPC),
 	}
 
 	client, err := a2aclient.NewFromEndpoints(ctx, endpoints)
 	if err != nil {
-		return "", fmt.Errorf("failed to create A2A client: %w", err)
+		return nil, fmt.Errorf("failed to create A2A client: %w", err)
 	}
 
 	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(content))
+	if contextID != "" {
+		msg.ContextID = contextID
+	}
+
 	result, err := client.SendMessage(ctx, &a2a.SendMessageRequest{
 		Message: msg,
 	})
 	if err != nil {
-		return "", fmt.Errorf("A2A SendMessage failed: %w", err)
+		return nil, fmt.Errorf("A2A SendMessage failed: %w", err)
 	}
 
-	return extractResultText(result)
+	return extractDispatchResult(result)
 }
 
-func extractResultText(result a2a.SendMessageResult) (string, error) {
+func extractDispatchResult(result a2a.SendMessageResult) (*a2aDispatchResult, error) {
 	switch r := result.(type) {
 	case *a2a.Message:
-		return partsToText(r.Parts), nil
+		return &a2aDispatchResult{
+			Text:      partsToText(r.Parts),
+			TaskID:    string(r.TaskID),
+			ContextID: r.ContextID,
+		}, nil
 	case *a2a.Task:
-		// Status.Message has the latest result from the agent
+		text := ""
 		if r.Status.Message != nil {
-			if text := partsToText(r.Status.Message.Parts); text != "" {
-				return text, nil
+			text = partsToText(r.Status.Message.Parts)
+		}
+		if text == "" && len(r.History) > 0 {
+			// Fall back to the last agent message in history
+			for i := len(r.History) - 1; i >= 0; i-- {
+				if r.History[i].Role == a2a.MessageRoleAgent {
+					text = partsToText(r.History[i].Parts)
+					break
+				}
 			}
 		}
-		// Fall back to history if status message is empty
-		if len(r.History) > 0 {
-			last := r.History[len(r.History)-1]
-			if last.Role == a2a.MessageRoleAgent {
-				return partsToText(last.Parts), nil
-			}
+		if text == "" {
+			text = fmt.Sprintf("task %s completed (state: %s)", r.ID, r.Status.State)
 		}
-		return fmt.Sprintf("task %s completed (state: %s)", r.ID, r.Status.State), nil
+		return &a2aDispatchResult{
+			Text:      text,
+			TaskID:    string(r.ID),
+			ContextID: r.ContextID,
+		}, nil
 	default:
-		return "", fmt.Errorf("unexpected A2A result type: %T", result)
+		return nil, fmt.Errorf("unexpected A2A result type: %T", result)
 	}
 }
 
