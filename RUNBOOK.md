@@ -150,6 +150,7 @@ env RELAY_URL=ws://localhost:2470 \
     BRIDGE_HANDLE=bridge.test \
     BRIDGE_PASSWORD=bridge-sandbox-pass \
     TRIAGE_HANDLE=triage-one.test \
+    MURMUR_TRIAGE_PASSWORD=triage-one-sandbox-pass \
     ./bridge
 ```
 
@@ -163,9 +164,11 @@ Bridge env vars:
 | `BRIDGE_PASSWORD` | `bridge-sandbox-pass` | Bridge account password |
 | `DISCOVERY_ADDR` | `:2471` | HTTP listen address for the discovery surface |
 | `TRIAGE_HANDLE` | `triage.test` | Handle the bridge looks up to find the triage agent |
+| `MURMUR_TRIAGE_PASSWORD` | _(unset)_ | Triage account password — when set, the bridge holds a PDS session for triage and signs routing signals as triage instead of as itself. Optional: if unset, routing signals fall back to bridge authorship and a warning is logged. |
 
 You should see:
 - `authenticated as bridge` with the bridge DID
+- `authenticated as triage` with triage's DID (only if `MURMUR_TRIAGE_PASSWORD` is set)
 - `backfilling registry from PDS` followed by `registry backfill complete`
 - `discovery server listening`
 - `connected to firehose`
@@ -290,7 +293,7 @@ reply signal published ...
 ./cli/murmur thread <uri-from-post>
 ```
 
-You should see the original request, a `(routing)` signal from `bridge.test` carrying triage's rationale, and a `(result)` signal with the agent's reply — both children of the request, properly indented.
+You should see the original request, a `(routing)` signal from `triage-one.test` carrying triage's rationale (or from `bridge.test` if `MURMUR_TRIAGE_PASSWORD` was unset), and a `(result)` signal from `bridge.test` with the agent's reply — both children of the request, properly indented.
 
 **Optional: watch the firehose in another terminal:**
 

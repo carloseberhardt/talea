@@ -39,10 +39,28 @@ type Bridge struct {
 	// over A2A when a tagless signal arrives with no continuation context.
 	triageHandle string
 
-	// PDS auth
+	// PDS auth (bridge's own account — used as the fallback when publishing
+	// records on behalf of an agent whose credentials we don't hold)
 	accessToken string
 	handle      string
 	password    string
+
+	// Per-agent PDS sessions, keyed by handle. The bridge holds credentials
+	// for agents we want to publish on behalf of (so the records they're
+	// authored under match the agent's identity, not the bridge's). Today
+	// this only contains triage; future slices will add more.
+	//
+	// TODO: token refresh / session renewal. Sessions currently last long
+	// enough for dev runs; for longer-lived deployments we'll need to refresh
+	// before the JWT expires.
+	sessions map[string]agentSession
+}
+
+// agentSession is a single PDS session held by the bridge on behalf of an
+// agent (or the bridge itself).
+type agentSession struct {
+	DID         string
+	AccessToken string
 }
 
 func main() {
@@ -54,6 +72,7 @@ func main() {
 	bridgePassword := envOrDefault("BRIDGE_PASSWORD", "bridge-sandbox-pass")
 	discoveryAddr := envOrDefault("DISCOVERY_ADDR", ":2471")
 	triageHandle := envOrDefault("TRIAGE_HANDLE", "triage.test")
+	triagePassword := os.Getenv("MURMUR_TRIAGE_PASSWORD")
 
 	registry := NewAgentRegistry(logger)
 
@@ -65,11 +84,33 @@ func main() {
 		triageHandle: triageHandle,
 		handle:       bridgeHandle,
 		password:     bridgePassword,
+		sessions:     make(map[string]agentSession),
 	}
 
 	if err := b.authenticate(); err != nil {
 		logger.Error("failed to authenticate bridge account", "error", err)
 		logger.Info("continuing without PDS auth — firehose consumption will still work, but reply publishing won't")
+	}
+
+	// Create a session for the triage agent so the bridge can sign routing
+	// signals as triage rather than as itself. If credentials are missing we
+	// log a warning and fall back to bridge-authored routing signals — the
+	// system still works, the audit trail is just slightly weaker.
+	if triagePassword == "" {
+		logger.Warn("MURMUR_TRIAGE_PASSWORD not set — routing signals will be authored by the bridge, not by triage",
+			"triage_handle", triageHandle,
+		)
+	} else {
+		session, err := b.createSession(triageHandle, triagePassword)
+		if err != nil {
+			logger.Warn("failed to create triage PDS session — falling back to bridge-authored routing signals",
+				"triage_handle", triageHandle,
+				"error", err,
+			)
+		} else {
+			b.sessions[triageHandle] = session
+			logger.Info("authenticated as triage", "handle", triageHandle, "did", session.DID)
+		}
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -271,7 +312,11 @@ func (b *Bridge) consumeFirehose(ctx context.Context) error {
 }
 
 func (b *Bridge) handleCommit(ctx context.Context, evt *comatproto.SyncSubscribeRepos_Commit) error {
-	if evt.Repo == b.bridgeDID {
+	// Skip events from any DID the bridge publishes under. This dedupes the
+	// bridge's own posts so it doesn't re-process records it just wrote — a
+	// triage-authored routing signal, for example, would otherwise come back
+	// over the firehose and look like a fresh signal to handle.
+	if b.isOwnPublisher(evt.Repo) {
 		return nil
 	}
 
@@ -398,7 +443,7 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 		// visible to anyone reading the thread later. The bridge dedupes its
 		// own posts on the firehose, so this won't trigger re-dispatch.
 		if b.accessToken != "" && len(decision.Mentions) > 0 {
-			if err := b.publishRoutingSignal(ctx, uri, cid, rootURI, rootCID, decision.Mentions, decision.Rationale); err != nil {
+			if err := b.publishRoutingSignal(ctx, b.triageHandle, uri, cid, rootURI, rootCID, decision.Mentions, decision.Rationale); err != nil {
 				b.logger.Error("failed to publish routing signal", "error", err)
 			}
 		}
@@ -465,7 +510,10 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 				TaskID:    result.TaskID,
 				ContextID: result.ContextID,
 			}
-			if err := b.publishReplySignal(ctx, uri, cid, rootURI, rootCID, agent.Name, result.Text, ref); err != nil {
+			// Reply signals are still published under the bridge's identity for
+			// now. The next slice (paired with POST /dispatch) will let the
+			// bridge sign these as the responding agent.
+			if err := b.publishReplySignal(ctx, "", uri, cid, rootURI, rootCID, agent.Name, result.Text, ref); err != nil {
 				b.logger.Error("failed to publish reply signal",
 					"agent", agent.Name,
 					"error", err,
@@ -702,7 +750,7 @@ func (b *Bridge) handleAgentProfileDelete(did string) {
 // bridge dispatches in parallel and dedupes its own posts on the firehose,
 // so this signal exists purely for audit visibility — anyone reading the
 // thread later can see how the routing decision was made.
-func (b *Bridge) publishRoutingSignal(ctx context.Context, parentURI, parentCID, rootURI, rootCID string, mentions []string, rationale string) error {
+func (b *Bridge) publishRoutingSignal(ctx context.Context, asHandle, parentURI, parentCID, rootURI, rootCID string, mentions []string, rationale string) error {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 
 	content := rationale
@@ -733,8 +781,10 @@ func (b *Bridge) publishRoutingSignal(ctx context.Context, parentURI, parentCID,
 		},
 	}
 
+	session := b.sessionFor(asHandle)
+
 	body := map[string]any{
-		"repo":       b.bridgeDID,
+		"repo":       session.DID,
 		"collection": signalCollection,
 		"validate":   false,
 		"record":     record,
@@ -753,7 +803,7 @@ func (b *Bridge) publishRoutingSignal(ctx context.Context, parentURI, parentCID,
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+b.accessToken)
+	req.Header.Set("Authorization", "Bearer "+session.AccessToken)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -773,6 +823,7 @@ func (b *Bridge) publishRoutingSignal(ctx context.Context, parentURI, parentCID,
 
 	b.logger.Info("routing signal published",
 		"uri", created.URI,
+		"author_did", session.DID,
 		"parent", parentURI,
 		"mentions", mentions,
 	)
@@ -784,7 +835,7 @@ func (b *Bridge) publishRoutingSignal(ctx context.Context, parentURI, parentCID,
 // directly replying to (the one being processed); rootURI/rootCID point at
 // the original thread root, which may be the same as the parent if we're
 // replying to a top-level signal.
-func (b *Bridge) publishReplySignal(ctx context.Context, parentURI, parentCID, rootURI, rootCID, agentName, result string, ref *a2aRef) error {
+func (b *Bridge) publishReplySignal(ctx context.Context, asHandle, parentURI, parentCID, rootURI, rootCID, agentName, result string, ref *a2aRef) error {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 
 	record := map[string]any{
@@ -820,8 +871,10 @@ func (b *Bridge) publishReplySignal(ctx context.Context, parentURI, parentCID, r
 		record["a2a"] = a2aMap
 	}
 
+	session := b.sessionFor(asHandle)
+
 	body := map[string]any{
-		"repo":       b.bridgeDID,
+		"repo":       session.DID,
 		"collection": signalCollection,
 		"validate":   false,
 		"record":     record,
@@ -840,7 +893,7 @@ func (b *Bridge) publishReplySignal(ctx context.Context, parentURI, parentCID, r
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+b.accessToken)
+	req.Header.Set("Authorization", "Bearer "+session.AccessToken)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -860,6 +913,7 @@ func (b *Bridge) publishReplySignal(ctx context.Context, parentURI, parentCID, r
 
 	b.logger.Info("reply signal published",
 		"uri", created.URI,
+		"author_did", session.DID,
 		"parent", parentURI,
 		"root", rootURI,
 		"agent", agentName,
@@ -904,33 +958,74 @@ func (b *Bridge) resolveHandle(ctx context.Context, did string) string {
 // --- Auth ---
 
 func (b *Bridge) authenticate() error {
-	body := fmt.Sprintf(`{"identifier":%q,"password":%q}`, b.handle, b.password)
+	session, err := b.createSession(b.handle, b.password)
+	if err != nil {
+		return err
+	}
+	b.accessToken = session.AccessToken
+	b.bridgeDID = session.DID
+	b.logger.Info("authenticated as bridge", "did", b.bridgeDID)
+	return nil
+}
+
+// createSession opens a PDS session for an arbitrary handle/password and
+// returns the resulting access token + DID. Used both for the bridge's own
+// account and for any agent accounts the bridge is configured to sign on
+// behalf of.
+func (b *Bridge) createSession(handle, password string) (agentSession, error) {
+	body := fmt.Sprintf(`{"identifier":%q,"password":%q}`, handle, password)
 	resp, err := http.Post(
 		b.pdsURL+"/xrpc/com.atproto.server.createSession",
 		"application/json",
 		bytes.NewReader([]byte(body)),
 	)
 	if err != nil {
-		return fmt.Errorf("session request failed: %w", err)
+		return agentSession{}, fmt.Errorf("session request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("session creation failed: HTTP %d", resp.StatusCode)
+		return agentSession{}, fmt.Errorf("session creation failed: HTTP %d", resp.StatusCode)
 	}
 
-	var session struct {
+	var raw struct {
 		AccessJwt string `json:"accessJwt"`
 		DID       string `json:"did"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
-		return fmt.Errorf("failed to decode session: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return agentSession{}, fmt.Errorf("failed to decode session: %w", err)
 	}
 
-	b.accessToken = session.AccessJwt
-	b.bridgeDID = session.DID
-	b.logger.Info("authenticated as bridge", "did", b.bridgeDID)
-	return nil
+	return agentSession{DID: raw.DID, AccessToken: raw.AccessJwt}, nil
+}
+
+// isOwnPublisher reports whether the given DID belongs to the bridge or to
+// any agent the bridge holds credentials for. Used by the firehose dedup to
+// skip records the bridge itself authored.
+func (b *Bridge) isOwnPublisher(did string) bool {
+	if did == b.bridgeDID {
+		return true
+	}
+	for _, s := range b.sessions {
+		if s.DID == did {
+			return true
+		}
+	}
+	return false
+}
+
+// sessionFor returns the PDS session the bridge should use when publishing
+// records on behalf of the given handle. Falls back to the bridge's own
+// session if no per-agent credentials are registered for that handle. The
+// fallback preserves authorship under bridge.test, which is the legacy
+// behavior we're incrementally moving away from.
+func (b *Bridge) sessionFor(asHandle string) agentSession {
+	if asHandle != "" {
+		if s, ok := b.sessions[asHandle]; ok {
+			return s
+		}
+	}
+	return agentSession{DID: b.bridgeDID, AccessToken: b.accessToken}
 }
 
 // --- Utilities ---
