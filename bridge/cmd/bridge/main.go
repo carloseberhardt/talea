@@ -66,13 +66,23 @@ type agentSession struct {
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
+	// Load .env file before reading any other env vars so file values become
+	// defaults that shell-set values can still override. Path defaults to
+	// `.env` in the current working directory; BRIDGE_ENV_FILE overrides.
+	envPath := envOrDefault("BRIDGE_ENV_FILE", ".env")
+	if loaded, err := loadDotEnv(envPath); err != nil {
+		logger.Warn("failed to read env file", "path", envPath, "error", err)
+	} else if loaded != "" {
+		logger.Info("loaded env file", "path", loaded)
+	}
+
 	relayURL := envOrDefault("RELAY_URL", "ws://localhost:2470")
 	pdsURL := envOrDefault("PDS_URL", "https://pds.murmur.internal")
 	bridgeHandle := envOrDefault("BRIDGE_HANDLE", "bridge.test")
 	bridgePassword := envOrDefault("BRIDGE_PASSWORD", "bridge-sandbox-pass")
 	discoveryAddr := envOrDefault("DISCOVERY_ADDR", ":2471")
 	triageHandle := envOrDefault("TRIAGE_HANDLE", "triage.test")
-	triagePassword := os.Getenv("MURMUR_TRIAGE_PASSWORD")
+	agentCredsRaw := os.Getenv("MURMUR_AGENT_CREDS")
 
 	registry := NewAgentRegistry(logger)
 
@@ -92,25 +102,49 @@ func main() {
 		logger.Info("continuing without PDS auth — firehose consumption will still work, but reply publishing won't")
 	}
 
-	// Create a session for the triage agent so the bridge can sign routing
-	// signals as triage rather than as itself. If credentials are missing we
-	// log a warning and fall back to bridge-authored routing signals — the
-	// system still works, the audit trail is just slightly weaker.
-	if triagePassword == "" {
-		logger.Warn("MURMUR_TRIAGE_PASSWORD not set — routing signals will be authored by the bridge, not by triage",
+	// Open PDS sessions for any agents whose credentials the bridge holds.
+	// MURMUR_AGENT_CREDS is a comma-separated list of `handle:password`
+	// pairs. Each entry becomes a session in b.sessions, which the publish
+	// layer uses to sign records under the agent's identity instead of the
+	// bridge's. Missing/malformed entries log a warning and the bridge falls
+	// back to bridge-authored signals for the affected agent.
+	//
+	// This is the env-var stage of the credential model: hardcoded text,
+	// fine for ~10 agents. The next slice replaces it with bridge-side
+	// account provisioning so credentials are derived from a single PDS
+	// admin secret rather than enumerated.
+	if agentCredsRaw == "" {
+		logger.Warn("MURMUR_AGENT_CREDS not set — all bridge-published signals will be authored by the bridge, not by agents")
+	} else {
+		for _, entry := range strings.Split(agentCredsRaw, ",") {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+			colon := strings.IndexByte(entry, ':')
+			if colon <= 0 {
+				logger.Warn("malformed MURMUR_AGENT_CREDS entry — expected handle:password", "entry", entry)
+				continue
+			}
+			handle := strings.TrimSpace(entry[:colon])
+			password := strings.TrimSpace(entry[colon+1:])
+			session, err := b.createSession(handle, password)
+			if err != nil {
+				logger.Warn("failed to create agent PDS session — falling back to bridge authorship for this agent",
+					"handle", handle,
+					"error", err,
+				)
+				continue
+			}
+			b.sessions[handle] = session
+			logger.Info("authenticated as agent", "handle", handle, "did", session.DID)
+		}
+	}
+
+	if _, ok := b.sessions[triageHandle]; !ok {
+		logger.Warn("no credentials for triage handle in MURMUR_AGENT_CREDS — routing signals will be authored by the bridge",
 			"triage_handle", triageHandle,
 		)
-	} else {
-		session, err := b.createSession(triageHandle, triagePassword)
-		if err != nil {
-			logger.Warn("failed to create triage PDS session — falling back to bridge-authored routing signals",
-				"triage_handle", triageHandle,
-				"error", err,
-			)
-		} else {
-			b.sessions[triageHandle] = session
-			logger.Info("authenticated as triage", "handle", triageHandle, "did", session.DID)
-		}
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -510,10 +544,10 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 				TaskID:    result.TaskID,
 				ContextID: result.ContextID,
 			}
-			// Reply signals are still published under the bridge's identity for
-			// now. The next slice (paired with POST /dispatch) will let the
-			// bridge sign these as the responding agent.
-			if err := b.publishReplySignal(ctx, "", uri, cid, rootURI, rootCID, agent.Name, result.Text, ref); err != nil {
+			// Sign reply signals as the responding agent if we hold their
+			// credentials; sessionFor falls back to bridge authorship for
+			// agents we don't.
+			if err := b.publishReplySignal(ctx, agent.Handle, uri, cid, rootURI, rootCID, agent.Name, result.Text, ref); err != nil {
 				b.logger.Error("failed to publish reply signal",
 					"agent", agent.Name,
 					"error", err,

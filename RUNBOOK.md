@@ -31,16 +31,31 @@ mkcert -cert-file certs/pds.murmur.internal.pem \
 ./scripts/generate-ca-bundle.sh
 ```
 
-Create a local `.env` file at the project root with the secrets AgentGateway needs to call LLM providers. **This file is gitignored — never commit real values.**
+Create a local `.env` file at the project root with secrets for AgentGateway and the bridge. **This file is gitignored — never commit real values.** The bridge auto-loads `.env` from its working directory at startup; AgentGateway picks it up via docker-compose's `env_file` directive.
 
 ```bash
 # .env
+
+# AgentGateway → LLM providers
 WATSONX_API_KEY=...
 WATSONX_PROJECT_ID=...
 
 # Optional: AWS credentials if you want the /bedrock route to work
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
+
+# Bridge: agents the bridge holds PDS credentials for. Format is a
+# comma-separated list of `handle:password` pairs. The bridge opens a PDS
+# session for each, and signs records on those agents' behalf when it
+# publishes routing/result signals into a thread. Agents not listed here
+# fall back to bridge authorship.
+#
+# (Sandbox passwords don't contain commas or colons; if you ever rotate to
+# something that does, switch to bridge-managed credentials instead.)
+MURMUR_AGENT_CREDS=triage-one.test:triage-one-sandbox-pass,agent-one.test:agent-one-sandbox-pass
+
+# Bridge: which handle resolves to the triage agent
+TRIAGE_HANDLE=triage-one.test
 ```
 
 ## 2. Build the Relay (first time or after patching)
@@ -144,31 +159,37 @@ The bridge must be running before publishing agent profiles via the firehose pat
 In a separate terminal:
 
 ```bash
-cd ~/projects/murmur/bridge
-env RELAY_URL=ws://localhost:2470 \
-    PDS_URL=https://pds.murmur.internal \
-    BRIDGE_HANDLE=bridge.test \
-    BRIDGE_PASSWORD=bridge-sandbox-pass \
-    TRIAGE_HANDLE=triage-one.test \
-    MURMUR_TRIAGE_PASSWORD=triage-one-sandbox-pass \
-    ./bridge
+The bridge reads `.env` from its working directory at startup, so as long as you run it from the project root (or set `BRIDGE_ENV_FILE`), no environment-variable juggling is needed:
+
+```bash
+cd ~/projects/murmur
+./bridge/bridge
 ```
 
-Bridge env vars:
+Or if you prefer to run from `bridge/`, point at the project-root .env:
+
+```bash
+cd ~/projects/murmur/bridge
+BRIDGE_ENV_FILE=../.env ./bridge
+```
+
+Bridge env vars (read from `.env` or the shell — shell wins):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `BRIDGE_ENV_FILE` | `.env` | Path to the env file the bridge auto-loads at startup. Anything already set in the shell takes precedence over file values. |
 | `RELAY_URL` | `ws://localhost:2470` | Relay firehose websocket |
 | `PDS_URL` | `https://pds.murmur.internal` | PDS HTTP base |
 | `BRIDGE_HANDLE` | `bridge.test` | Bridge's atproto handle |
 | `BRIDGE_PASSWORD` | `bridge-sandbox-pass` | Bridge account password |
 | `DISCOVERY_ADDR` | `:2471` | HTTP listen address for the discovery surface |
 | `TRIAGE_HANDLE` | `triage.test` | Handle the bridge looks up to find the triage agent |
-| `MURMUR_TRIAGE_PASSWORD` | _(unset)_ | Triage account password — when set, the bridge holds a PDS session for triage and signs routing signals as triage instead of as itself. Optional: if unset, routing signals fall back to bridge authorship and a warning is logged. |
+| `MURMUR_AGENT_CREDS` | _(unset)_ | Comma-separated `handle:password` pairs. Each entry gives the bridge a PDS session it can use to sign records on that agent's behalf. Agents not listed fall back to bridge authorship with a warning. |
 
 You should see:
+- `loaded env file` with the path
 - `authenticated as bridge` with the bridge DID
-- `authenticated as triage` with triage's DID (only if `MURMUR_TRIAGE_PASSWORD` is set)
+- `authenticated as agent` lines for each entry in `MURMUR_AGENT_CREDS`
 - `backfilling registry from PDS` followed by `registry backfill complete`
 - `discovery server listening`
 - `connected to firehose`
@@ -293,7 +314,7 @@ reply signal published ...
 ./cli/murmur thread <uri-from-post>
 ```
 
-You should see the original request, a `(routing)` signal from `triage-one.test` carrying triage's rationale (or from `bridge.test` if `MURMUR_TRIAGE_PASSWORD` was unset), and a `(result)` signal from `bridge.test` with the agent's reply — both children of the request, properly indented.
+You should see the original request, a `(routing)` signal from `triage-one.test` carrying triage's rationale, and a `(result)` signal from `agent-one.test` (the delivery agent) with its reply — both children of the request, properly indented. Both are signed by the agent's own key, not by `bridge.test`. Any agent missing from `MURMUR_AGENT_CREDS` falls back to bridge authorship for its signals.
 
 **Optional: watch the firehose in another terminal:**
 
