@@ -35,20 +35,26 @@ create_account() {
   local password="$3"
 
   echo "Creating account: $handle"
-  docker compose exec pds goat pds admin account create \
+  if docker compose exec pds goat pds admin account create \
     --pds-host http://localhost:2583 \
     --admin-password "$ADMIN_PASSWORD" \
     --handle "$handle" \
     --email "$email" \
-    --password "$password"
-  echo "  Created: $handle"
+    --password "$password" 2>&1; then
+    echo "  Created: $handle"
+  else
+    echo "  Already exists or failed: $handle (continuing)"
+  fi
 }
 
 # Human account
 create_account "carlos.test" "carlos@murmur.dev" "carlos-sandbox-pass"
 
-# Agent account
+# Agent accounts
 create_account "agent-one.test" "agent-one@murmur.dev" "agent-one-sandbox-pass"
+create_account "triage-one.test" "triage-one@murmur.dev" "triage-one-sandbox-pass"
+create_account "weather-one.test" "weather-one@murmur.dev" "weather-one-sandbox-pass"
+create_account "orchestrator.test" "orchestrator@murmur.dev" "orchestrator-sandbox-pass"
 
 # Bridge account (infrastructure — publishes routing signals and results)
 create_account "bridge.test" "bridge@murmur.dev" "bridge-sandbox-pass"

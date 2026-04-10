@@ -116,12 +116,13 @@ curl -s -X POST http://localhost:4000/watsonx/chat/completions \
 ```
 
 This creates:
+
 - `carlos.test` — human account
 - `agent-one.test` — domain agent account (delivery agent)
 - `triage-one.test` — swarm agent account (triage)
+- `weather-one.test` — domain agent account (weather)
+- `orchestrator.test` — swarm agent account (orchestrator / general-purpose fallback)
 - `bridge.test` — bridge infrastructure account
-
-If your `create-accounts.sh` predates triage, add `triage-one.test` to it (same shape as the other agent accounts).
 
 ## 6. Register PDS with Relay
 
@@ -129,25 +130,32 @@ If your `create-accounts.sh` predates triage, add `triage-one.test` to it (same 
 ./scripts/register-pds-with-relay.sh
 ```
 
-## 7. Start the Delivery Agent
+## 7–8. Start All Agents
 
-In a separate terminal:
+One script starts all agents (delivery, triage, weather, orchestrator) in a single terminal. Ctrl-C kills them all cleanly:
 
 ```bash
-cd ~/projects/agent-skill-poc
-uv run python mock-agents/delivery_agent.py
-# Serves A2A on port 5006
+./scripts/start-agents.sh
 ```
 
-## 8. Start the Triage Agent
+The delivery agent is expected at `~/projects/agent-skill-poc` by default; override with `AGENT_SKILL_POC_DIR` if yours lives elsewhere. Each agent runs `uv sync` on startup so venvs are created/updated automatically.
 
-In a separate terminal:
+Ports: delivery on 5006, triage on 5050, weather on 5051, orchestrator on 5052.
+
+If you prefer separate terminals for debugging, start each agent individually:
 
 ```bash
-cd ~/projects/murmur/agents/triage
-uv sync             # first time only
-uv run python triage_agent.py
-# Serves A2A on port 5050
+# Terminal 1: delivery
+cd ~/projects/agent-skill-poc && uv run python mock-agents/delivery_agent.py
+
+# Terminal 2: triage
+cd ~/projects/murmur/agents/triage && uv sync && uv run python triage_agent.py
+
+# Terminal 3: weather
+cd ~/projects/murmur/agents/weather && uv sync && uv run python weather_agent.py
+
+# Terminal 4: orchestrator
+cd ~/projects/murmur/agents/orchestrator && uv sync && uv run python orchestrator_agent.py
 ```
 
 The startup log shows the bridge discovery URL, the LLM base URL, and the model name. If any of those are wrong for your environment, override with `BRIDGE_DISCOVERY_URL`, `LLM_BASE_URL`, or `LLM_MODEL`.
@@ -158,13 +166,13 @@ The bridge must be running before publishing agent profiles via the firehose pat
 
 In a separate terminal:
 
-```bash
+````bash
 The bridge reads `.env` from its working directory at startup, so as long as you run it from the project root (or set `BRIDGE_ENV_FILE`), no environment-variable juggling is needed:
 
 ```bash
 cd ~/projects/murmur
 ./bridge/bridge
-```
+````
 
 Or if you prefer to run from `bridge/`, point at the project-root .env:
 
@@ -175,18 +183,20 @@ BRIDGE_ENV_FILE=../.env ./bridge
 
 Bridge env vars (read from `.env` or the shell — shell wins):
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `BRIDGE_ENV_FILE` | `.env` | Path to the env file the bridge auto-loads at startup. Anything already set in the shell takes precedence over file values. |
-| `RELAY_URL` | `ws://localhost:2470` | Relay firehose websocket |
-| `PDS_URL` | `https://pds.murmur.internal` | PDS HTTP base |
-| `BRIDGE_HANDLE` | `bridge.test` | Bridge's atproto handle |
-| `BRIDGE_PASSWORD` | `bridge-sandbox-pass` | Bridge account password |
-| `DISCOVERY_ADDR` | `:2471` | HTTP listen address for the discovery surface |
-| `TRIAGE_HANDLE` | `triage.test` | Handle the bridge looks up to find the triage agent |
-| `MURMUR_AGENT_CREDS` | _(unset)_ | Comma-separated `handle:password` pairs. Each entry gives the bridge a PDS session it can use to sign records on that agent's behalf. Agents not listed fall back to bridge authorship with a warning. |
+| Variable              | Default                       | Purpose                                                                                                                                                                                                |
+| --------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `BRIDGE_ENV_FILE`     | `.env`                        | Path to the env file the bridge auto-loads at startup. Anything already set in the shell takes precedence over file values.                                                                            |
+| `RELAY_URL`           | `ws://localhost:2470`         | Relay firehose websocket                                                                                                                                                                               |
+| `PDS_URL`             | `https://pds.murmur.internal` | PDS HTTP base                                                                                                                                                                                          |
+| `BRIDGE_HANDLE`       | `bridge.test`                 | Bridge's atproto handle                                                                                                                                                                                |
+| `BRIDGE_PASSWORD`     | `bridge-sandbox-pass`         | Bridge account password                                                                                                                                                                                |
+| `DISCOVERY_ADDR`      | `:2471`                       | HTTP listen address for the discovery surface                                                                                                                                                          |
+| `TRIAGE_HANDLE`       | `triage.test`                 | Handle the bridge looks up to find the triage agent                                                                                                                                                    |
+| `ORCHESTRATOR_HANDLE` | `orchestrator.test`           | Handle the bridge falls back to when triage returns empty mentions. Safety net — triage should route here on its own, but if it doesn't, the bridge does.                                              |
+| `MURMUR_AGENT_CREDS`  | _(unset)_                     | Comma-separated `handle:password` pairs. Each entry gives the bridge a PDS session it can use to sign records on that agent's behalf. Agents not listed fall back to bridge authorship with a warning. |
 
 You should see:
+
 - `loaded env file` with the path
 - `authenticated as bridge` with the bridge DID
 - `authenticated as agent` lines for each entry in `MURMUR_AGENT_CREDS`
@@ -201,15 +211,15 @@ With the bridge running, publish profiles for the delivery agent and the triage 
 **Delivery agent (`agent-one.test`):**
 
 ```fish
-set PWD "agent-one-sandbox-pass"
+set PASSWD "agent-one-sandbox-pass"
 
 set TOKEN (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
   -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"agent-one.test\", \"password\": \"$PWD\"}" | jq -r '.accessJwt')
+  -d "{\"identifier\": \"agent-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.accessJwt')
 
 set DID (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
   -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"agent-one.test\", \"password\": \"$PWD\"}" | jq -r '.did')
+  -d "{\"identifier\": \"agent-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.did')
 
 set BODY (jq -n --arg did "$DID" '{
   repo: $did,
@@ -233,15 +243,15 @@ curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.putRecord \
 **Triage agent (`triage-one.test`):**
 
 ```fish
-set PWD "triage-one-sandbox-pass"
+set PASSWD "triage-one-sandbox-pass"
 
 set TOKEN (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
   -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"triage-one.test\", \"password\": \"$PWD\"}" | jq -r '.accessJwt')
+  -d "{\"identifier\": \"triage-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.accessJwt')
 
 set DID (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
   -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"triage-one.test\", \"password\": \"$PWD\"}" | jq -r '.did')
+  -d "{\"identifier\": \"triage-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.did')
 
 set BODY (jq -n --arg did "$DID" '{
   repo: $did,
@@ -262,13 +272,77 @@ curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.putRecord \
   -d "$BODY" | jq '.'
 ```
 
+**Weather agent (`weather-one.test`):**
+
+```fish
+set PASSWD "weather-one-sandbox-pass"
+
+set TOKEN (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
+  -H "Content-Type: application/json" \
+  -d "{\"identifier\": \"weather-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.accessJwt')
+
+set DID (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
+  -H "Content-Type: application/json" \
+  -d "{\"identifier\": \"weather-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.did')
+
+set BODY (jq -n --arg did "$DID" '{
+  repo: $did,
+  collection: "community.swarm.agent.profile",
+  rkey: "self",
+  validate: false,
+  record: {
+    "$type": "community.swarm.agent.profile",
+    name: "Weather Agent",
+    description: "Answers questions about weather conditions, forecasts, and climate.",
+    a2aEndpoint: "http://localhost:5051"
+  }
+}')
+
+curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.putRecord \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "$BODY" | jq '.'
+```
+
+**Orchestrator agent (`orchestrator.test`):**
+
+```fish
+set PASSWD "orchestrator-sandbox-pass"
+
+set TOKEN (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
+  -H "Content-Type: application/json" \
+  -d "{\"identifier\": \"orchestrator.test\", \"password\": \"$PASSWD\"}" | jq -r '.accessJwt')
+
+set DID (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
+  -H "Content-Type: application/json" \
+  -d "{\"identifier\": \"orchestrator.test\", \"password\": \"$PASSWD\"}" | jq -r '.did')
+
+set BODY (jq -n --arg did "$DID" '{
+  repo: $did,
+  collection: "community.swarm.agent.profile",
+  rkey: "self",
+  validate: false,
+  record: {
+    "$type": "community.swarm.agent.profile",
+    name: "Orchestrator",
+    description: "General-purpose assistant that handles questions which don't fit any specialist agent.",
+    a2aEndpoint: "http://localhost:5052"
+  }
+}')
+
+curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.putRecord \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "$BODY" | jq '.'
+```
+
 In the bridge terminal you should see `discovered agent profile` followed by `agent registered` for each. Verify with the CLI:
 
 ```bash
 ./cli/murmur agents
 ```
 
-Both `agent-one.test` and `triage-one.test` should appear.
+All four agents should appear: `agent-one.test`, `triage-one.test`, `weather-one.test`, `orchestrator.test`.
 
 **Note:** `putRecord` with identical content produces no commit (no firehose event). If something is off, change the `description` to trigger a new commit, or restart the bridge — startup backfill picks up profiles regardless.
 
@@ -296,25 +370,41 @@ To reply within an existing thread:
 
 ## 12. Validate
 
-**Bridge terminal** for a tagless signal should show:
+Three test cases exercise the three triage routing paths:
 
-```
-signal received ... mentions=[]
-calling triage ...
-triage decision mentions=[agent-one.test] rationale=...
-routing signal published ...
-dispatching to agent ... handle=agent-one.test
-A2A result received ... task_id=... context_id=...
-reply signal published ...
-```
-
-**Read the thread back via the CLI:**
+**Delivery routing:**
 
 ```bash
+./cli/murmur post "where is package 241234"
 ./cli/murmur thread <uri-from-post>
+# Expect: routing signal from triage → agent-one.test, result from agent-one.test
 ```
 
-You should see the original request, a `(routing)` signal from `triage-one.test` carrying triage's rationale, and a `(result)` signal from `agent-one.test` (the delivery agent) with its reply — both children of the request, properly indented. Both are signed by the agent's own key, not by `bridge.test`. Any agent missing from `MURMUR_AGENT_CREDS` falls back to bridge authorship for its signals.
+**Weather routing:**
+
+```bash
+./cli/murmur post "what's the weather like in Austin TX?"
+./cli/murmur thread <uri-from-post>
+# Expect: routing signal from triage → weather-one.test, result from weather-one.test
+```
+
+**Orchestrator fallback:**
+
+```bash
+./cli/murmur post "tell me a joke"
+./cli/murmur thread <uri-from-post>
+# Expect: routing signal from triage → orchestrator.test, result from orchestrator.test
+```
+
+**Ambiguity test (optional, observe):**
+
+```bash
+./cli/murmur post "will my package arrive before the rain stops?"
+./cli/murmur thread <uri-from-post>
+# Triage might pick both agents, or pick orchestrator. Either is valid.
+```
+
+All signals should be signed by the correct agent identity (visible in the thread output's `@handle` prefix). Any agent missing from `MURMUR_AGENT_CREDS` falls back to bridge authorship.
 
 **Optional: watch the firehose in another terminal:**
 

@@ -4,7 +4,7 @@ This is the working implementation plan. It reflects what we've actually built a
 
 ## Current State
 
-**Phases 1–4 (core path) are complete.** A human posts a tagless natural-language signal, the bridge calls a triage agent over A2A, triage uses an LLM (via AgentGateway → watsonx) to decide which agents should handle it, the bridge dispatches to those agents, the agents reply, and the conversation can continue across multiple turns with per-agent context preserved — all without any domain agent knowing atproto exists.
+**Phases 1–4 (core path) are complete.** A human posts a natural-language signal, the bridge calls a triage agent over A2A, triage uses an LLM (via AgentGateway → watsonx) to decide which agents should handle it — choosing between multiple domain agents or falling back to the orchestrator for anything that doesn't fit a specialist. The bridge dispatches to those agents, the agents reply (via LLM for weather and orchestrator, hardcoded for delivery), and the conversation can continue across multiple turns with per-agent context preserved — all without any domain agent knowing atproto exists.
 
 ### What's Running
 
@@ -15,9 +15,11 @@ This is the working implementation plan. It reflects what we've actually built a
 - **Relay** — built from `bluesky-social/indigo` source with SSRF check disabled for local sandbox. Uses SQLite, watches our PDS via the admin `requestCrawl` API.
 - **Bridge** — Go service consuming the relay firehose, dispatching A2A tasks by @-mention, publishing results back as threaded reply signals. Also exposes a small HTTP discovery surface (`GET /agents`, `GET /healthz`) on port 2471 so other services can read the registry without touching atproto.
 - **AgentGateway** — back as an LLM router (port 4000). `/watsonx` → gpt-oss-120b, `/bedrock` → mistral-large. Used by the triage agent (and any future swarm-side service) so model choice is a config decision, not code. Never on the A2A dispatch path.
-- **Triage agent** — Python A2A service in `agents/triage/`. Called by the bridge over A2A when a signal has no mentions and no continuation context. Discovers available agents via the bridge's `/agents` endpoint, fetches each agent's A2A card directly, and asks an LLM via gateway which agents should handle the signal.
+- **Triage agent** — Python A2A service in `agents/triage/`. Called by the bridge over A2A when a signal has no mentions and no continuation context. Discovers available agents via the bridge's `/agents` endpoint, fetches each agent's A2A card directly, and asks an LLM via gateway which agents should handle the signal. Prompt instructs triage to always route somewhere — if no specialist fits, route to the orchestrator.
+- **Weather agent** — Python A2A service in `agents/weather/`. LLM-backed domain agent that answers weather-related questions via gateway. Second domain agent, added so triage has real ambiguity to resolve.
+- **Orchestrator agent** — Python A2A service in `agents/orchestrator/`. LLM-backed general-purpose chat agent. The swarm's fallback — triage routes here when no specialist fits. In this first incarnation, it just answers directly; decomposition and sub-task dispatch are a future evolution.
 - **Murmur CLI** — Go binary in `cli/`. `post`, `reply`, `thread`, `agents`, `whoami`. Replaces the curl ceremony for posting and reading signals.
-- Ports: PLC on 2582, PDS on 2583 (HTTPS on 443 via Caddy), Relay on 2470, Bridge discovery on 2471, AgentGateway LLM on 4000, delivery agent on 5006, triage on 5050
+- Ports: PLC on 2582, PDS on 2583 (HTTPS on 443 via Caddy), Relay on 2470, Bridge discovery on 2471, AgentGateway LLM on 4000, delivery agent on 5006, triage on 5050, weather on 5051, orchestrator on 5052
 
 ### What We've Proven
 
@@ -25,7 +27,8 @@ This is the working implementation plan. It reflects what we've actually built a
 - **@-mention dispatch works.** Signals carry a structured `mentions` field; the bridge resolves handles or DIDs to registered agents and dispatches by mention. Capability tags are gone — the agent card is the source of truth for what an agent does.
 - **Conversation continuity works.** A2A `taskId` and `contextId` are threaded through reply records via the lexicon's `a2a` field. Multi-turn replies in the same thread continue the same A2A task. Multi-agent threads keep separate per-agent contexts.
 - **Implicit chat continuation works.** Replies in an agent thread don't need an explicit @ — the bridge sees `parent.a2a.agentDid`, treats that agent as the implicit mention, and dispatches with continuity. Analogous to Slack/Discord thread semantics.
-- **LLM-based triage works.** Tagless top-level signals get routed to the right agent via an LLM call to the triage agent. The triage decision is published as a `type: routing` signal in the thread for audit visibility — anyone reading the thread later sees the rationale.
+- **LLM-based triage works and disambiguates.** Tagless top-level signals get routed to the right agent via an LLM call to the triage agent. With multiple domain agents registered (delivery + weather), triage correctly picks the relevant specialist. Signals that don't fit any specialist route to the orchestrator. The triage decision is published as a `type: routing` signal in the thread for audit visibility.
+- **The orchestrator fallback works.** Signals that don't match a specialist agent reach the orchestrator and get a useful response. The bridge also has a safety net: if triage returns empty mentions despite its prompt, the bridge routes to the orchestrator rather than dropping the signal.
 - **Threading is correct.** Bridge replies set `reply.root` to the actual thread root and `reply.parent` to the directly-replied-to message, so multi-turn conversations form a coherent tree.
 - **Discovery without atproto knowledge works.** The bridge exposes its agent registry via plain HTTP, so the triage agent (and any future service) can find what's in the swarm without learning atproto.
 - Custom lexicon records work with `validate: false`. Threaded signals via `strongRef` work as expected. The firehose delivers full record content. The bridge's self-DID dedup prevents firehose loops. A2A protocol 1.0 PascalCase method names are required (`SendMessage`).
@@ -36,7 +39,9 @@ This is the working implementation plan. It reflects what we've actually built a
 |---|---|
 | carlos.test | Human |
 | agent-one.test | Domain agent (delivery tracker) |
+| weather-one.test | Domain agent (weather, LLM-backed) |
 | triage-one.test | Swarm agent (LLM-based router) |
+| orchestrator.test | Swarm agent (general-purpose fallback, LLM-backed) |
 | bridge.test | Bridge infrastructure (publishes routing + result signals) |
 
 ### Infrastructure Decisions Made
@@ -102,15 +107,16 @@ The core path is built and verified end to end. Carlos posts a tagless signal vi
 
 The structure is in place; what's left is the kind of work that surfaces only by using the system.
 
-1. **Iterate on triage prompts and behavior.** The current prompt is a rough first draft. Things to test:
+1. **Iterate on triage prompts and behavior.** The prompt now instructs triage to always route somewhere (orchestrator as fallback for non-specialist signals). Things to test:
    - Multi-intent signals (e.g., "remind me to buy milk and check pkg 99") — does triage pick multiple agents?
-   - Signals that don't fit any agent — does it correctly return empty mentions with a useful rationale?
+   - Ambiguous signals that span domains (e.g., "will my package arrive before the rain stops?") — does triage pick both, or fall back to orchestrator?
    - Edge cases where the LLM returns malformed JSON — the parser is tolerant but we should know what surfaces.
-2. **Add a second domain agent** so triage has more than one option to choose from. Stress-tests the discovery + card-fetch + LLM-routing path with real ambiguity.
-3. **A `publish-profile` CLI subcommand.** Every new agent needs the curl-based profile publish dance. Worth automating.
-4. **A real (LLM-backed) domain agent for testing chat memory.** The current delivery agent is hardcoded behavior, so we can't draw conclusions about whether the contextId-based continuity actually surfaces conversation history at the agent layer. We need an agent whose executor reads task history off its task store and includes it in LLM prompts.
-5. **Loop protection beyond own-DID dedup.** As more swarm agents come into play (summarization, dedup, correlation in the future), we may need provenance fields on signals or sender-class filters to prevent unintended cascades. Not urgent yet.
-6. **Multi-agent threads.** Once there are at least two domain agents, post signals where triage picks multiple. Observe how the conversation reads.
+2. ~~Add a second domain agent~~ — **done.** Weather agent (LLM-backed) gives triage real ambiguity to resolve.
+3. **Orchestrator decomposition.** The orchestrator currently just answers directly via LLM. The next evolution is for it to decompose multi-step requests: call the bridge's `POST /dispatch` to fire off sub-questions to specialist agents, wait via `POST /watch` for replies, and synthesize. This requires the bridge to expose dispatch and watch HTTP endpoints — a separate, larger slice.
+4. **A `publish-profile` CLI subcommand.** Every new agent needs the curl-based profile publish dance. Worth automating.
+5. **Chat memory verification.** The weather agent is LLM-backed, so we can now test whether contextId-based continuity actually surfaces conversation history at the agent layer. Requires an agent whose executor reads task history off its task store and includes it in LLM prompts — the current agents don't do this yet.
+6. **Loop protection beyond own-publisher dedup.** As more swarm agents come into play, we may need provenance fields on signals or sender-class filters to prevent unintended cascades. Not urgent yet.
+7. **Multi-agent threads.** Post signals where triage picks multiple agents. Observe how the conversation reads.
 
 ---
 

@@ -39,6 +39,11 @@ type Bridge struct {
 	// over A2A when a tagless signal arrives with no continuation context.
 	triageHandle string
 
+	// Orchestrator: the fallback agent. If triage returns empty mentions
+	// (despite being told not to), the bridge routes to this handle as a
+	// safety net. Also logged in the routing signal for audit.
+	orchestratorHandle string
+
 	// PDS auth (bridge's own account — used as the fallback when publishing
 	// records on behalf of an agent whose credentials we don't hold)
 	accessToken string
@@ -82,6 +87,7 @@ func main() {
 	bridgePassword := envOrDefault("BRIDGE_PASSWORD", "bridge-sandbox-pass")
 	discoveryAddr := envOrDefault("DISCOVERY_ADDR", ":2471")
 	triageHandle := envOrDefault("TRIAGE_HANDLE", "triage.test")
+	orchestratorHandle := envOrDefault("ORCHESTRATOR_HANDLE", "orchestrator.test")
 	agentCredsRaw := os.Getenv("MURMUR_AGENT_CREDS")
 
 	registry := NewAgentRegistry(logger)
@@ -91,8 +97,9 @@ func main() {
 		relayURL:     relayURL,
 		pdsURL:       pdsURL,
 		registry:     registry,
-		triageHandle: triageHandle,
-		handle:       bridgeHandle,
+		triageHandle:       triageHandle,
+		orchestratorHandle: orchestratorHandle,
+		handle:             bridgeHandle,
 		password:     bridgePassword,
 		sessions:     make(map[string]agentSession),
 	}
@@ -163,6 +170,7 @@ func main() {
 		"pds", pdsURL,
 		"discovery", discoveryAddr,
 		"triage_handle", triageHandle,
+		"orchestrator_handle", orchestratorHandle,
 		"did", b.bridgeDID,
 		"registered_agents", len(registry.All()),
 	)
@@ -346,14 +354,6 @@ func (b *Bridge) consumeFirehose(ctx context.Context) error {
 }
 
 func (b *Bridge) handleCommit(ctx context.Context, evt *comatproto.SyncSubscribeRepos_Commit) error {
-	// Skip events from any DID the bridge publishes under. This dedupes the
-	// bridge's own posts so it doesn't re-process records it just wrote — a
-	// triage-authored routing signal, for example, would otherwise come back
-	// over the firehose and look like a fresh signal to handle.
-	if b.isOwnPublisher(evt.Repo) {
-		return nil
-	}
-
 	r, err := repo.VerifyCommitMessage(ctx, evt)
 	if err != nil {
 		b.logger.Warn("failed to verify commit", "did", evt.Repo, "error", err)
@@ -399,7 +399,12 @@ func (b *Bridge) handleCommit(ctx context.Context, evt *comatproto.SyncSubscribe
 
 		switch colStr {
 		case signalCollection:
-			if op.Action == "create" {
+			// Skip signals from any DID the bridge publishes under. This
+			// dedupes the bridge's own posts (routing signals, reply signals)
+			// so it doesn't re-dispatch records it just wrote. Profile events
+			// are NOT skipped — agents whose credentials we hold still need
+			// their profile publications processed for registry updates.
+			if op.Action == "create" && !b.isOwnPublisher(evt.Repo) {
 				b.handleSignal(ctx, evt.Repo, rkey.String(), op.Cid.String(), record)
 			}
 		case profileCollection:
@@ -483,11 +488,28 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 		}
 
 		if len(decision.Mentions) == 0 {
-			b.logger.Info("triage returned no mentions, dropping signal",
-				"signal_uri", uri,
-				"rationale", decision.Rationale,
-			)
-			return
+			if b.orchestratorHandle != "" {
+				b.logger.Info("triage returned no mentions, falling back to orchestrator",
+					"signal_uri", uri,
+					"orchestrator", b.orchestratorHandle,
+					"rationale", decision.Rationale,
+				)
+				decision.Mentions = []string{b.orchestratorHandle}
+				decision.Rationale += " (bridge fallback: routed to orchestrator)"
+
+				// Publish the routing signal for the fallback case too.
+				if b.accessToken != "" {
+					if err := b.publishRoutingSignal(ctx, b.triageHandle, uri, cid, rootURI, rootCID, decision.Mentions, decision.Rationale); err != nil {
+						b.logger.Error("failed to publish routing signal", "error", err)
+					}
+				}
+			} else {
+				b.logger.Info("triage returned no mentions, dropping signal",
+					"signal_uri", uri,
+					"rationale", decision.Rationale,
+				)
+				return
+			}
 		}
 
 		mentions = decision.Mentions

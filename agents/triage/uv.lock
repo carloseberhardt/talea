@@ -996,7 +996,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a2a-sdk", extras = ["sqlite"], specifier = ">=1.0.0a0" },
+    { name = "a2a-sdk", extras = ["sqlite"], specifier = "==1.0.0a0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "openai", specifier = ">=1.50" },
     { name = "packaging", specifier = ">=24.0" },

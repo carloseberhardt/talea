@@ -114,7 +114,7 @@ def format_agents_for_prompt(agents: list[dict[str, Any]], cards: dict[str, dict
 # ── LLM prompt and call ─────────────────────────────────────────────
 
 SYSTEM_PROMPT = """You are the triage agent for a multi-agent swarm. Your job is to read a user's
-message and decide which agent(s) in the swarm — if any — should handle it.
+message and decide which agent(s) in the swarm should handle it.
 
 You will be given:
   - The user's message
@@ -130,8 +130,12 @@ decision as a JSON object in EXACTLY this format:
 
 Rules:
   - Use atproto handles (e.g., "agent-one.test"), not display names.
-  - If no agent fits, return {"mentions": [], "rationale": "..."}.
-  - If multiple agents fit, include them all.
+  - If a specialist agent is a good fit, route to that agent.
+  - If multiple specialist agents fit, include them all.
+  - If NO specialist agent is a good fit, route to the general-purpose agent
+    (it will be in the list — look for the one that handles general questions).
+    Never return an empty mentions list. There is always at least one agent
+    that can help.
   - Respond with ONLY the JSON object. No prose, no markdown fences, nothing else."""
 
 
