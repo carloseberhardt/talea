@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
@@ -19,8 +20,10 @@ type a2aDispatchResult struct {
 }
 
 // sendA2ATask sends a blocking SendMessage to an A2A agent. If contextID is
-// non-empty, it's set on the outgoing message — the agent's task store will
-// recognize it and resume the matching task instead of starting a new one.
+// non-empty, it's set on the outgoing message so the agent can group related
+// tasks under the same context. Each turn creates a new task; the agent
+// reconstructs conversation history by querying its task store for all tasks
+// sharing the same contextId.
 func sendA2ATask(ctx context.Context, agentURL, content, contextID string) (*a2aDispatchResult, error) {
 	endpoints := []*a2a.AgentInterface{
 		a2a.NewAgentInterface(agentURL, a2a.TransportProtocolJSONRPC),
@@ -47,8 +50,10 @@ func sendA2ATask(ctx context.Context, agentURL, content, contextID string) (*a2a
 }
 
 func extractDispatchResult(result a2a.SendMessageResult) (*a2aDispatchResult, error) {
+	slog.Info("A2A response type", "type", fmt.Sprintf("%T", result))
 	switch r := result.(type) {
 	case *a2a.Message:
+		slog.Info("A2A Message response", "task_id", r.TaskID, "context_id", r.ContextID)
 		return &a2aDispatchResult{
 			Text:      partsToText(r.Parts),
 			TaskID:    string(r.TaskID),
