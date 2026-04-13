@@ -1,11 +1,12 @@
 [project]
 name = "orchestrator-agent"
 version = "0.1.0"
-description = "Murmur orchestrator — general-purpose chat for signals that don't fit a specialist"
+description = "Murmur orchestrator — decomposes compound queries across specialist agents"
 requires-python = ">=3.11"
 dependencies = [
   "a2a-sdk[sqlite]==1.0.0a0",
   "uvicorn[standard]>=0.30",
+  "httpx>=0.27",
   "openai>=1.50",
   "sse-starlette>=2.1",
   "packaging>=24.0",

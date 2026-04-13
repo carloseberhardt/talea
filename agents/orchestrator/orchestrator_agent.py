@@ -1,19 +1,32 @@
 """
-Orchestrator agent — general-purpose chat for signals no specialist handles.
+Orchestrator agent — decomposes compound queries across specialist agents.
 
-The fallback agent in the murmur swarm. Triage routes here when no specialist
-domain agent is a good fit for a signal. In this first incarnation the
-orchestrator is a simple LLM-backed chat agent — it answers directly rather
-than decomposing or coordinating sub-tasks. Decomposition (dispatch + watch)
-is a future evolution.
+The orchestrator in the murmur swarm. Triage routes here when a query needs
+multiple specialists with correlated sub-queries, or when no specialist fits.
+
+For compound queries: discovers available agents, uses an LLM to decide which
+agent to ask next, and returns a dispatch instruction to the bridge. The bridge
+dispatches to the specialist and feeds the result back. This repeats until the
+orchestrator has enough information to synthesize a final answer.
+
+For simple queries that don't need specialists: answers directly via LLM.
+
+The protocol is the same as triage — the orchestrator returns JSON with
+"mentions" + "content" for dispatch, or plain text for a final answer. The
+bridge drives the loop.
 
 Run: uv run python orchestrator_agent.py
 Serves on port 5052 by default (override with ORCHESTRATOR_PORT).
 """
 
+import asyncio
+import json
 import logging
 import os
+import re
+from typing import Any
 
+import httpx
 import uvicorn
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.apps import A2AStarletteApplication
@@ -25,11 +38,12 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from a2a.utils.message import new_agent_text_message
 from openai import AsyncOpenAI
 
-# ── Configuration ───────────────────────────────────────────────────
+# ── Configuration ─────────────────���─────────────────────────────────
 
 PORT = int(os.getenv("ORCHESTRATOR_PORT", "5052"))
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:4000/watsonx")
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
+BRIDGE_DISCOVERY_URL = os.getenv("BRIDGE_DISCOVERY_URL", "http://localhost:2471")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,9 +54,94 @@ log = logging.getLogger("orchestrator")
 
 llm_client = AsyncOpenAI(base_url=LLM_BASE_URL, api_key="not-needed")
 
-# ── LLM prompt ─────────────────────────────────────────────────────
+# ── Agent discovery ──────────────────���─────────────────────────────
 
-SYSTEM_PROMPT = """\
+SKIP_HANDLES = {"triage-one.test", "orchestrator.test"}
+
+
+async def discover_agents(http: httpx.AsyncClient) -> list[dict[str, Any]]:
+    """Get the list of registered agents from the bridge discovery endpoint."""
+    try:
+        resp = await http.get(f"{BRIDGE_DISCOVERY_URL}/agents", timeout=5.0)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        log.warning("agent discovery failed: %s", e)
+        return []
+
+
+async def fetch_agent_card(http: httpx.AsyncClient, endpoint: str) -> dict[str, Any] | None:
+    """Fetch an agent's A2A card, or None on failure."""
+    url = endpoint.rstrip("/") + "/.well-known/agent-card.json"
+    try:
+        resp = await http.get(url, timeout=5.0)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        log.warning("failed to fetch agent card at %s: %s", url, e)
+        return None
+
+
+def format_agents_for_prompt(agents: list[dict[str, Any]], cards: dict[str, dict[str, Any]]) -> str:
+    """Render the available-agents section for the LLM prompt."""
+    lines = []
+    for i, agent in enumerate(agents, start=1):
+        handle = agent.get("handle", "")
+        if not handle or handle in SKIP_HANDLES:
+            continue
+        card = cards.get(handle)
+
+        name = (card or {}).get("name") or agent.get("name") or handle
+        desc = (card or {}).get("description", "")
+
+        lines.append(f"{i}. @{handle} ({name})")
+        if desc:
+            lines.append(f"   {desc}")
+
+        skills = (card or {}).get("skills") or []
+        if skills:
+            lines.append("   Skills:")
+            for s in skills:
+                sid = s.get("id", "")
+                sname = s.get("name", "")
+                sdesc = s.get("description", "")
+                lines.append(f"     - {sid}: {sname} — {sdesc}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+# ── LLM prompts ─────────────���──────────────────────────────────────
+
+ORCHESTRATOR_PROMPT = """\
+You are the orchestrator for a multi-agent swarm. You coordinate specialist
+agents to answer compound queries.
+
+You will receive either:
+  1. A user's original question (first turn)
+  2. A result from a specialist agent you previously dispatched to (subsequent turns)
+
+On each turn, decide your next action:
+
+  A) DISPATCH to a specialist: return JSON with the agent's handle and a
+     standalone query for that agent. The query must be self-contained —
+     include any concrete details from prior results (e.g., "Austin, TX"
+     not "the delivery destination").
+
+     {{"mentions": ["agent-handle.test"], "content": "standalone query for this agent"}}
+
+  B) ANSWER the user: if you have enough information, return a plain-text
+     answer that synthesizes everything. Do NOT wrap it in JSON. Do not
+     mention agents or the orchestration process.
+
+Rules:
+  - Use atproto handles (e.g., "agent-one.test"), not display names.
+  - One dispatch per turn. The bridge will send the result back to you.
+  - Order dispatches so later ones can use earlier results.
+  - When you have all the information needed, synthesize and answer directly.
+  - Keep answers concise."""
+
+
+DIRECT_ANSWER_PROMPT = """\
 You are a general-purpose assistant in a multi-agent swarm. You handle
 questions and requests that don't fit any specialist agent.
 
@@ -53,17 +152,12 @@ tracking agent), mention that — but still do your best to help.
 Keep answers brief — a few sentences unless the user asks for detail."""
 
 
-# ── A2A executor ────────────────────────────────────────────────────
+# ── A2A executor ────────────���───────────────────────────────────────
 
 
 async def build_chat_history(context: RequestContext, task_store: InMemoryTaskStore) -> list[dict[str, str]]:
-    """Build an OpenAI-style message list from prior tasks in the same context.
-
-    Each turn in a thread is a separate A2A task, but they share a contextId.
-    We query the task store for all completed tasks with the same contextId
-    and collect their messages to give the LLM full conversational context.
-    """
-    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    """Build an OpenAI-style message list from prior tasks in the same context."""
+    messages: list[dict[str, str]] = []
 
     context_id = context.context_id
     if not context_id:
@@ -85,6 +179,7 @@ async def build_chat_history(context: RequestContext, task_store: InMemoryTaskSt
 class OrchestratorExecutor(AgentExecutor):
     def __init__(self, task_store: InMemoryTaskStore):
         self.task_store = task_store
+        self._agents_section: str | None = None
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         updater = TaskUpdater(event_queue, context.task_id, context.context_id)
@@ -95,43 +190,101 @@ class OrchestratorExecutor(AgentExecutor):
             await updater.complete(new_agent_text_message("I didn't receive a message. How can I help?"))
             return
 
-        messages = await build_chat_history(context, self.task_store)
-        messages.append({"role": "user", "content": user_input})
-        log.info("sending %d messages to LLM (including system)", len(messages))
+        # Build conversation history from prior turns in this context.
+        history = await build_chat_history(context, self.task_store)
 
+        # Discover agents (cached across turns within same executor instance
+        # but refreshed on each new request).
+        agents_section = await self._get_agents_section()
+
+        if not agents_section:
+            # No specialists available — answer directly.
+            reply = await self._direct_answer(history, user_input)
+        else:
+            # Build messages with orchestrator system prompt + agent info.
+            reply = await self._orchestrate(history, user_input, agents_section)
+
+        log.info("▶ reply: %s", reply[:200])
+        await updater.complete(new_agent_text_message(reply))
+
+    async def _get_agents_section(self) -> str:
+        """Discover agents and format for prompt. Cached per request."""
+        async with httpx.AsyncClient() as http:
+            agents = await discover_agents(http)
+            if not agents:
+                return ""
+
+            card_results = await asyncio.gather(
+                *(fetch_agent_card(http, a["a2aEndpoint"]) for a in agents),
+                return_exceptions=False,
+            )
+            cards = {a["handle"]: c for a, c in zip(agents, card_results) if c}
+
+        return format_agents_for_prompt(agents, cards)
+
+    async def _orchestrate(self, history: list[dict], user_input: str, agents_section: str) -> str:
+        """Use LLM to decide: dispatch to a specialist or answer directly."""
+        system = (
+            f"{ORCHESTRATOR_PROMPT}\n\n"
+            f'Available specialist agents (use the @handle in "mentions"):\n\n'
+            f"{agents_section}"
+        )
+
+        messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": user_input})
+
+        log.info("calling LLM (%d messages including system)", len(messages))
+        try:
+            completion = await llm_client.chat.completions.create(
+                model=LLM_MODEL,
+                messages=messages,
+                temperature=0.2,
+            )
+            reply = (completion.choices[0].message.content or "").strip()
+            log.info("LLM response: %s", reply[:300])
+            return reply
+        except Exception as e:
+            log.error("LLM call failed: %s", e)
+            return f"Sorry, I'm having trouble right now. ({e})"
+
+    async def _direct_answer(self, history: list[dict], user_input: str) -> str:
+        """Answer directly — no specialists available."""
+        messages: list[dict[str, str]] = [{"role": "system", "content": DIRECT_ANSWER_PROMPT}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": user_input})
+
+        log.info("direct answer: sending %d messages to LLM", len(messages))
         try:
             completion = await llm_client.chat.completions.create(
                 model=LLM_MODEL,
                 messages=messages,
                 temperature=0.5,
             )
-            reply = (completion.choices[0].message.content or "").strip()
+            return (completion.choices[0].message.content or "").strip()
         except Exception as e:
             log.error("LLM call failed: %s", e)
-            reply = f"Sorry, I'm having trouble generating a response right now. ({e})"
-
-        log.info("▶ reply: %s", reply[:200])
-        await updater.complete(new_agent_text_message(reply))
+            return f"Sorry, I'm having trouble generating a response right now. ({e})"
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         pass
 
 
-# ── Agent card and app setup ────────────────────────────────────────
+# ── Agent card and app setup ────────���───────────────────────────────
 
 
 def build_app():
     agent_card = AgentCard(
         name="orchestrator_agent",
         description=(
-            "General-purpose assistant that handles questions and requests which don't "
-            "fit any specialist agent. The swarm's fallback — if no domain agent is the "
-            "right fit, the orchestrator steps in."
+            "General-purpose assistant and orchestrator. Handles questions that don't "
+            "fit a specialist, and coordinates multi-agent queries by decomposing them "
+            "into sub-tasks dispatched to specialist agents."
         ),
         supported_interfaces=[
             AgentInterface(url=f"http://localhost:{PORT}", protocol_binding="JSONRPC"),
         ],
-        version="0.1.0",
+        version="0.2.0",
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
         capabilities=AgentCapabilities(streaming=False),
@@ -148,6 +301,20 @@ def build_app():
                     "Tell me a joke",
                     "What's the capital of France?",
                     "Help me brainstorm ideas for a birthday party",
+                ],
+            ),
+            AgentSkill(
+                id="multi_agent_coordinator",
+                name="Multi-Agent Coordinator",
+                description=(
+                    "Decomposes compound queries that need multiple specialist agents, "
+                    "dispatches sub-tasks in the right order, and synthesizes results "
+                    "into a single coherent answer."
+                ),
+                tags=["orchestrator", "coordinator", "decompose"],
+                examples=[
+                    "When does my package arrive and what's the weather there?",
+                    "Track my delivery and tell me if I need an umbrella when it arrives",
                 ],
             ),
         ],
@@ -175,4 +342,5 @@ if __name__ == "__main__":
     log.info("orchestrator agent starting on port %d", PORT)
     log.info("  LLM base URL: %s", LLM_BASE_URL)
     log.info("  LLM model:    %s", LLM_MODEL)
+    log.info("  bridge discovery: %s", BRIDGE_DISCOVERY_URL)
     uvicorn.run(app, host="0.0.0.0", port=PORT)

@@ -136,6 +136,10 @@ Rules:
     (it will be in the list — look for the one that handles general questions).
     Never return an empty mentions list. There is always at least one agent
     that can help.
+  - If the message requires MULTIPLE specialist agents AND the sub-queries
+    reference each other (e.g., pronouns like "there", "that", or one answer
+    depends on another), route to the orchestrator/general-purpose agent
+    instead of listing multiple specialists. It will decompose and coordinate.
   - Respond with ONLY the JSON object. No prose, no markdown fences, nothing else."""
 
 

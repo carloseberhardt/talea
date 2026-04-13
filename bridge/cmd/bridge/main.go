@@ -542,6 +542,16 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 			"context_id", contextID,
 		)
 
+		// Orchestrator dispatch loop: the orchestrator may return dispatch
+		// instructions (JSON with "mentions" + "content") instead of a final
+		// answer. The bridge dispatches to the indicated agent, publishes
+		// signals in the thread, and feeds the result back to the orchestrator.
+		// This repeats until the orchestrator returns a plain-text answer.
+		if agent.Handle == b.orchestratorHandle {
+			b.orchestratorLoop(ctx, agent, content, contextID, uri, cid, rootURI, rootCID)
+			continue
+		}
+
 		result, err := sendA2ATask(ctx, agent.A2AEndpoint, content, contextID)
 		if err != nil {
 			b.logger.Error("A2A dispatch failed",
@@ -577,6 +587,150 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 			}
 		}
 	}
+}
+
+// orchestratorLoop drives the orchestrator's multi-turn dispatch cycle. The
+// orchestrator returns either a dispatch instruction (JSON with "mentions" and
+// "content") or a plain-text final answer. For dispatch instructions, the
+// bridge dispatches to the indicated agent, publishes routing + reply signals
+// in the thread, and feeds the result back to the orchestrator. This repeats
+// until the orchestrator returns a final answer (plain text, no mentions).
+//
+// The pattern is identical to triage routing — the orchestrator is just a
+// multi-turn triage that can run several rounds before producing its answer.
+const maxOrchestratorRounds = 10
+
+func (b *Bridge) orchestratorLoop(
+	ctx context.Context,
+	orch *RegisteredAgent,
+	initialContent, contextID string,
+	signalURI, signalCID, rootURI, rootCID string,
+) {
+	content := initialContent
+
+	for round := 0; round < maxOrchestratorRounds; round++ {
+		result, err := sendA2ATask(ctx, orch.A2AEndpoint, content, contextID)
+		if err != nil {
+			b.logger.Error("orchestrator A2A call failed", "round", round, "error", err)
+			return
+		}
+
+		// Use the contextId from the orchestrator's response for subsequent
+		// turns so its task store can reconstruct conversation history.
+		if result.ContextID != "" {
+			contextID = result.ContextID
+		}
+
+		b.logger.Info("orchestrator response",
+			"round", round,
+			"task_id", result.TaskID,
+			"context_id", result.ContextID,
+			"text", result.Text,
+		)
+
+		// Try to parse as a dispatch instruction (same shape as triage).
+		instruction := b.parseDispatchInstruction(result.Text)
+		if instruction == nil {
+			// Plain text — final answer. Publish and we're done.
+			b.logger.Info("orchestrator returned final answer", "round", round)
+			if b.accessToken != "" {
+				ref := &a2aRef{
+					AgentDID:  orch.DID,
+					TaskID:    result.TaskID,
+					ContextID: result.ContextID,
+				}
+				if err := b.publishReplySignal(ctx, orch.Handle, signalURI, signalCID, rootURI, rootCID, orch.Name, result.Text, ref); err != nil {
+					b.logger.Error("failed to publish orchestrator reply", "error", err)
+				}
+			}
+			return
+		}
+
+		// Dispatch instruction: route to the indicated agent(s).
+		for _, mention := range instruction.Mentions {
+			agent := b.resolveMention(mention)
+			if agent == nil {
+				b.logger.Warn("orchestrator mentioned unresolved agent", "mention", mention)
+				continue
+			}
+
+			b.logger.Info("orchestrator sub-dispatch",
+				"round", round,
+				"target", agent.Handle,
+				"content", instruction.Content,
+			)
+
+			// Publish routing signal with the actual sub-query as content.
+			if b.accessToken != "" {
+				if err := b.publishRoutingSignal(ctx, orch.Handle,
+					signalURI, signalCID, rootURI, rootCID,
+					[]string{agent.Handle}, instruction.Content,
+				); err != nil {
+					b.logger.Error("failed to publish sub-dispatch routing signal", "error", err)
+				}
+			}
+
+			// Dispatch to the specialist agent.
+			subResult, err := sendA2ATask(ctx, agent.A2AEndpoint, instruction.Content, "")
+			if err != nil {
+				b.logger.Error("sub-dispatch A2A call failed", "agent", agent.Handle, "error", err)
+				// Feed the error back to the orchestrator so it can adapt.
+				content = fmt.Sprintf("Error dispatching to %s: %s", agent.Handle, err)
+				continue
+			}
+
+			b.logger.Info("sub-dispatch result",
+				"agent", agent.Handle,
+				"result", subResult.Text,
+			)
+
+			// Publish the specialist's reply in the thread.
+			if b.accessToken != "" {
+				ref := &a2aRef{
+					AgentDID:  agent.DID,
+					TaskID:    subResult.TaskID,
+					ContextID: subResult.ContextID,
+				}
+				if err := b.publishReplySignal(ctx, agent.Handle, signalURI, signalCID, rootURI, rootCID, agent.Name, subResult.Text, ref); err != nil {
+					b.logger.Error("failed to publish sub-dispatch reply", "agent", agent.Handle, "error", err)
+				}
+			}
+
+			// Feed the result back to the orchestrator for the next round.
+			content = fmt.Sprintf("[%s] %s", agent.Name, subResult.Text)
+		}
+	}
+
+	b.logger.Warn("orchestrator hit max rounds without final answer", "max", maxOrchestratorRounds)
+}
+
+// dispatchInstruction is the JSON shape the orchestrator returns when it wants
+// the bridge to sub-dispatch to a specialist agent. Same shape as triage.
+type dispatchInstruction struct {
+	Mentions []string `json:"mentions"`
+	Content  string   `json:"content"`
+}
+
+// parseDispatchInstruction tries to parse an orchestrator response as a
+// dispatch instruction. Returns nil if it's a plain-text final answer.
+func (b *Bridge) parseDispatchInstruction(text string) *dispatchInstruction {
+	// Quick check: if it doesn't look like JSON, it's a final answer.
+	trimmed := strings.TrimSpace(text)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil
+	}
+
+	var inst dispatchInstruction
+	if err := json.Unmarshal([]byte(trimmed), &inst); err != nil {
+		return nil
+	}
+
+	// Must have at least one mention and content to be a dispatch instruction.
+	if len(inst.Mentions) == 0 || inst.Content == "" {
+		return nil
+	}
+
+	return &inst
 }
 
 // threadRoot computes the (root URI, root CID) for replies the bridge is
