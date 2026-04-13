@@ -19,12 +19,21 @@ type a2aDispatchResult struct {
 	ContextID string
 }
 
+// threadContext carries atproto signal threading info in A2A messages so that
+// agents can call POST /publish with correct thread references.
+type threadContext struct {
+	SignalURI  string `json:"signalUri"`
+	SignalCID  string `json:"signalCid"`
+	RootURI    string `json:"rootUri"`
+	RootCID    string `json:"rootCid"`
+	PublishURL string `json:"publishUrl"`
+}
+
 // sendA2ATask sends a blocking SendMessage to an A2A agent. If contextID is
 // non-empty, it's set on the outgoing message so the agent can group related
-// tasks under the same context. Each turn creates a new task; the agent
-// reconstructs conversation history by querying its task store for all tasks
-// sharing the same contextId.
-func sendA2ATask(ctx context.Context, agentURL, content, contextID string) (*a2aDispatchResult, error) {
+// tasks under the same context. If tc is non-nil, a DataPart with the thread
+// context is included alongside the text so the agent can call /publish.
+func sendA2ATask(ctx context.Context, agentURL, content, contextID string, tc *threadContext) (*a2aDispatchResult, error) {
 	endpoints := []*a2a.AgentInterface{
 		a2a.NewAgentInterface(agentURL, a2a.TransportProtocolJSONRPC),
 	}
@@ -34,7 +43,20 @@ func sendA2ATask(ctx context.Context, agentURL, content, contextID string) (*a2a
 		return nil, fmt.Errorf("failed to create A2A client: %w", err)
 	}
 
-	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(content))
+	parts := []*a2a.Part{a2a.NewTextPart(content)}
+	if tc != nil {
+		parts = append(parts, a2a.NewDataPart(map[string]any{
+			"threadContext": map[string]any{
+				"signalUri":  tc.SignalURI,
+				"signalCid":  tc.SignalCID,
+				"rootUri":    tc.RootURI,
+				"rootCid":    tc.RootCID,
+				"publishUrl": tc.PublishURL,
+			},
+		}))
+	}
+
+	msg := a2a.NewMessage(a2a.MessageRoleUser, parts...)
 	if contextID != "" {
 		msg.ContextID = contextID
 	}

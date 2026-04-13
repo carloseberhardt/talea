@@ -30,6 +30,7 @@ type agentDTO struct {
 func (b *Bridge) startDiscoveryServer(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/agents", b.handleListAgents)
+	mux.HandleFunc("/publish", b.handlePublish)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
