@@ -404,24 +404,9 @@ func (b *Bridge) handleCommit(ctx context.Context, evt *comatproto.SyncSubscribe
 
 		switch colStr {
 		case signalCollection:
-			if op.Action != "create" {
-				continue
+			if op.Action == "create" {
+				b.handleSignal(ctx, evt.Repo, rkey.String(), op.Cid.String(), record)
 			}
-			// Skip result signals from DIDs the bridge holds credentials for.
-			// These are reply signals the bridge published as part of dispatch
-			// — the dispatch is already complete. Processing them would trigger
-			// spurious triage or implicit continuation loops.
-			//
-			// Routing signals from held DIDs ARE processed — they're the
-			// dispatch triggers in the event-driven model (triage publishes a
-			// routing signal, the firehose delivers it, handleSignal dispatches).
-			// Signals published via /publish are also processed (they arrive as
-			// routing/request type, not result).
-			sigType, _ := record["type"].(string)
-			if sigType == "result" && b.isHeldDID(evt.Repo) {
-				continue
-			}
-			b.handleSignal(ctx, evt.Repo, rkey.String(), op.Cid.String(), record)
 		case profileCollection:
 			b.handleAgentProfile(ctx, evt.Repo, record)
 		}
@@ -492,10 +477,13 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 
 	rootURI, rootCID := threadRoot(record, uri, cid)
 
-	// ── No mentions → triage. Publish routing signal and stop. ──────
-	// The routing signal returns on the firehose with mentions, triggering
-	// dispatch in a separate handleSignal call. One signal, one action.
-	if len(mentions) == 0 {
+	// ── No mentions → triage (requests only). ──────────────────────
+	// Only request-type signals go to triage. Result signals without
+	// mentions or parent a2a simply fall through to drop — they're
+	// answers, not requests for routing. Routing signals always have
+	// mentions. This means every signal on the firehose is processed
+	// uniformly; the routing rules just don't match results.
+	if len(mentions) == 0 && signalType == "request" {
 		decision := b.callTriage(ctx, content)
 		if decision == nil {
 			return
@@ -597,49 +585,10 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 			}
 		}
 
-		// Forward result to the agent that published this signal, if the
-		// signal carries a2a correlation. This is how the orchestrator
-		// receives specialist results: it publishes a signal via /publish
-		// with a2a pointing back to itself, and the bridge forwards the
-		// specialist's reply directly. Result signals are skipped on the
-		// firehose (they're audit records), so this direct forwarding is
-		// the delivery mechanism.
-		signalA2A := extractSignalA2A(record)
-		if signalA2A != nil && signalA2A.AgentDID != "" {
-			callbackAgent := b.registry.FindByDID(signalA2A.AgentDID)
-			if callbackAgent != nil && callbackAgent.DID != agent.DID {
-				resultText := fmt.Sprintf("[%s] %s", agent.Name, result.Text)
-				b.logger.Info("forwarding result to signal author",
-					"from", agent.Handle,
-					"to", callbackAgent.Handle,
-					"context_id", signalA2A.ContextID,
-				)
-				fwdResult, err := sendA2ATask(ctx, callbackAgent.A2AEndpoint, resultText, signalA2A.ContextID, nil)
-				if err != nil {
-					b.logger.Error("failed to forward result",
-						"to", callbackAgent.Handle,
-						"error", err,
-					)
-				} else if fwdResult != nil && fwdResult.Text != "" {
-					// Publish the callback agent's response in the thread.
-					// This is typically the orchestrator's synthesized answer
-					// or an intermediate status.
-					fwdRef := &a2aRef{
-						AgentDID:  callbackAgent.DID,
-						TaskID:    fwdResult.TaskID,
-						ContextID: fwdResult.ContextID,
-					}
-					if b.accessToken != "" {
-						if err := b.publishReplySignal(ctx, callbackAgent.Handle, uri, cid, rootURI, rootCID, callbackAgent.Name, fwdResult.Text, fwdRef); err != nil {
-							b.logger.Error("failed to publish forwarded reply",
-								"agent", callbackAgent.Handle,
-								"error", err,
-							)
-						}
-					}
-				}
-			}
-		}
+		// The reply signal goes to atproto. When it returns on the firehose,
+		// implicit continuation (rule #2) routes it to the agent that
+		// published the parent signal — e.g., the orchestrator receives
+		// specialist results because its /publish signal carries a2a.
 	}
 }
 
@@ -809,24 +758,6 @@ func extractMentions(record map[string]any) []string {
 		}
 	}
 	return mentions
-}
-
-// extractSignalA2A reads the a2a field directly from a signal record. Used
-// by handleSignal to check if the dispatching signal was published by an
-// agent that wants results forwarded (e.g., orchestrator via /publish).
-func extractSignalA2A(record map[string]any) *a2aRef {
-	raw, ok := record["a2a"].(map[string]any)
-	if !ok {
-		return nil
-	}
-	agentDID, _ := raw["agentDid"].(string)
-	if agentDID == "" {
-		return nil
-	}
-	ref := &a2aRef{AgentDID: agentDID}
-	ref.TaskID, _ = raw["taskId"].(string)
-	ref.ContextID, _ = raw["contextId"].(string)
-	return ref
 }
 
 // resolveMention looks up a mention (handle or DID) in the registry. Returns
@@ -1082,22 +1013,6 @@ func (b *Bridge) authenticate() error {
 	b.bridgeDID = session.DID
 	b.logger.Info("authenticated as bridge", "did", b.bridgeDID)
 	return nil
-}
-
-// isHeldDID reports whether the given DID belongs to the bridge or to any
-// agent the bridge holds credentials for. Used by the firehose handler to
-// skip result signals from these DIDs (they're bridge-published reply signals
-// that don't need re-processing).
-func (b *Bridge) isHeldDID(did string) bool {
-	if did == b.bridgeDID {
-		return true
-	}
-	for _, s := range b.sessions {
-		if s.DID == did {
-			return true
-		}
-	}
-	return false
 }
 
 // createSession opens a PDS session for an arbitrary handle/password and
