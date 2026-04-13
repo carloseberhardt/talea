@@ -462,9 +462,12 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 		parentA2A = a
 	}
 
-	// Implicit chat continuation: if no explicit mentions and the parent is
-	// an agent reply, treat that agent as the sole implicit mention.
-	if len(mentions) == 0 && parentA2A != nil && parentA2A.AgentDID != "" {
+	// Implicit chat continuation: only for request-type signals. If no
+	// explicit mentions and the parent is an agent reply, treat that agent
+	// as the sole implicit mention. Result and routing signals never trigger
+	// implicit continuation — result signals are audit records, and routing
+	// signals always carry explicit mentions.
+	if len(mentions) == 0 && signalType == "request" && parentA2A != nil && parentA2A.AgentDID != "" {
 		if agent := b.registry.FindByDID(parentA2A.AgentDID); agent != nil {
 			b.logger.Info("implicit mention from parent agent",
 				"signal_uri", uri,
@@ -472,6 +475,18 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 				"did", parentA2A.AgentDID,
 			)
 			mentions = []string{parentA2A.AgentDID}
+		}
+	}
+
+	// Extract the current signal's own a2a back-reference. Set by agents via
+	// /publish when they want results from this dispatch forwarded back to them.
+	// Only used for routing signals — when a routing signal has a2a.agentDid,
+	// the dispatch result reply will carry an explicit mention for that agent
+	// so rule #1 delivers the result without needing implicit continuation.
+	var ownA2AAgentDID string
+	if raw, ok := record["a2a"].(map[string]any); ok {
+		if s, ok := raw["agentDid"].(string); ok {
+			ownA2AAgentDID = s
 		}
 	}
 
@@ -521,6 +536,21 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 	}
 
 	// ── Has mentions → dispatch to each agent. ─────────────────────
+	// If this is a routing signal with a2a back-reference (published via /publish
+	// by the orchestrator), forward the result to that agent via an explicit
+	// mention on the reply signal. This uses rule #1 for delivery instead of
+	// rule #2 (implicit continuation), which would loop.
+	var forwardToAgent *RegisteredAgent
+	if signalType == "routing" && ownA2AAgentDID != "" {
+		forwardToAgent = b.registry.FindByDID(ownA2AAgentDID)
+		if forwardToAgent != nil {
+			b.logger.Info("result will be forwarded to a2a owner",
+				"owner", forwardToAgent.Name,
+				"did", ownA2AAgentDID,
+			)
+		}
+	}
+
 	for _, mention := range mentions {
 		agent := b.resolveMention(mention)
 		if agent == nil {
@@ -577,18 +607,22 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 				TaskID:    result.TaskID,
 				ContextID: result.ContextID,
 			}
-			if err := b.publishReplySignal(ctx, agent.Handle, uri, cid, rootURI, rootCID, agent.Name, result.Text, ref); err != nil {
+			// If this dispatch was triggered by a routing signal with a2a
+			// (e.g., orchestrator's /publish signal), include an explicit
+			// mention for that agent on the reply signal so rule #1 delivers
+			// the result back. Without this, rule #2 would need to fire on
+			// result signals — which creates loops.
+			var replyMentions []string
+			if forwardToAgent != nil {
+				replyMentions = []string{forwardToAgent.Handle}
+			}
+			if err := b.publishReplySignal(ctx, agent.Handle, uri, cid, rootURI, rootCID, agent.Name, result.Text, ref, replyMentions); err != nil {
 				b.logger.Error("failed to publish reply signal",
 					"agent", agent.Name,
 					"error", err,
 				)
 			}
 		}
-
-		// The reply signal goes to atproto. When it returns on the firehose,
-		// implicit continuation (rule #2) routes it to the agent that
-		// published the parent signal — e.g., the orchestrator receives
-		// specialist results because its /publish signal carries a2a.
 	}
 }
 
@@ -928,13 +962,16 @@ func (b *Bridge) publishRoutingSignal(ctx context.Context, asHandle, parentURI, 
 // directly replying to (the one being processed); rootURI/rootCID point at
 // the original thread root, which may be the same as the parent if we're
 // replying to a top-level signal.
-func (b *Bridge) publishReplySignal(ctx context.Context, asHandle, parentURI, parentCID, rootURI, rootCID, agentName, result string, ref *a2aRef) error {
+func (b *Bridge) publishReplySignal(ctx context.Context, asHandle, parentURI, parentCID, rootURI, rootCID, agentName, result string, ref *a2aRef, mentions []string) error {
 	record := map[string]any{
 		"$type":     signalCollection,
 		"type":      "result",
 		"content":   fmt.Sprintf("[%s] %s", agentName, result),
 		"createdAt": time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 		"reply":     buildReplyRef(parentURI, parentCID, rootURI, rootCID),
+	}
+	if len(mentions) > 0 {
+		record["mentions"] = mentions
 	}
 
 	// Carry A2A correlation so a follow-up reply in this thread can continue
