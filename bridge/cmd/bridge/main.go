@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"time"
 
 	comatproto "github.com/bluesky-social/indigo/api/atproto"
@@ -58,18 +59,19 @@ type Bridge struct {
 	// for agents we want to publish on behalf of (so the records they're
 	// authored under match the agent's identity, not the bridge's). Today
 	// this only contains triage; future slices will add more.
-	//
-	// TODO: token refresh / session renewal. Sessions currently last long
-	// enough for dev runs; for longer-lived deployments we'll need to refresh
-	// before the JWT expires.
-	sessions map[string]agentSession
+	sessions   map[string]*agentSession
+	sessionsMu sync.RWMutex
 }
 
 // agentSession is a single PDS session held by the bridge on behalf of an
-// agent (or the bridge itself).
+// agent (or the bridge itself). Includes credentials so the bridge can
+// re-authenticate when tokens expire.
 type agentSession struct {
-	DID         string
-	AccessToken string
+	DID          string
+	AccessToken  string
+	RefreshToken string
+	Handle       string
+	Password     string
 }
 
 func main() {
@@ -105,7 +107,7 @@ func main() {
 		orchestratorHandle: orchestratorHandle,
 		handle:             bridgeHandle,
 		password:           bridgePassword,
-		sessions:           make(map[string]agentSession),
+		sessions:           make(map[string]*agentSession),
 		publishBaseURL:     "http://localhost" + discoveryAddr,
 	}
 
@@ -872,47 +874,68 @@ type createRecordResult struct {
 // createSignalRecord publishes a signal record to the PDS under the given
 // identity (resolved via sessionFor). Returns the committed URI and CID.
 func (b *Bridge) createSignalRecord(ctx context.Context, asHandle string, record map[string]any) (*createRecordResult, error) {
-	session := b.sessionFor(asHandle)
+	// Try up to 2 times: first attempt with current token, second after refresh.
+	for attempt := range 2 {
+		session := b.sessionFor(asHandle)
 
-	body := map[string]any{
-		"repo":       session.DID,
-		"collection": signalCollection,
-		"validate":   false,
-		"record":     record,
+		body := map[string]any{
+			"repo":       session.DID,
+			"collection": signalCollection,
+			"validate":   false,
+			"record":     record,
+		}
+
+		jsonBody, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("marshal signal record: %w", err)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "POST",
+			b.pdsURL+"/xrpc/com.atproto.repo.createRecord",
+			bytes.NewReader(jsonBody),
+		)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+session.AccessToken)
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("PDS request failed: %w", err)
+		}
+
+		if resp.StatusCode == 401 && attempt == 0 {
+			resp.Body.Close()
+			// Resolve the effective handle for refresh — if asHandle didn't
+			// match a session, we fell back to the bridge's own session.
+			refreshHandle := session.Handle
+			if refreshHandle == "" {
+				refreshHandle = b.handle
+			}
+			b.logger.Warn("PDS returned 401, refreshing session", "handle", refreshHandle)
+			if err := b.refreshOrReauth(refreshHandle, session.AccessToken); err != nil {
+				b.logger.Error("session refresh failed", "handle", refreshHandle, "error", err)
+				return nil, fmt.Errorf("PDS auth expired and refresh failed: %w", err)
+			}
+			continue // retry with refreshed token
+		}
+
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			respBody, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("PDS returned HTTP %d: %s", resp.StatusCode, string(respBody))
+		}
+
+		var created createRecordResult
+		if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+			return nil, fmt.Errorf("decode PDS response: %w", err)
+		}
+
+		return &created, nil
 	}
-
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("marshal signal record: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST",
-		b.pdsURL+"/xrpc/com.atproto.repo.createRecord",
-		bytes.NewReader(jsonBody),
-	)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+session.AccessToken)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("PDS request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("PDS returned HTTP %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var created createRecordResult
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		return nil, fmt.Errorf("decode PDS response: %w", err)
-	}
-
-	return &created, nil
+	return nil, fmt.Errorf("createSignalRecord: exhausted retry attempts")
 }
 
 // buildReplyRef builds the reply threading object for a signal record.
@@ -1059,15 +1082,18 @@ func (b *Bridge) authenticate() error {
 	}
 	b.accessToken = session.AccessToken
 	b.bridgeDID = session.DID
+	// Store bridge session in the sessions map too, so refreshOrReauth can find it.
+	// The bridge's own handle is stored with credentials for re-auth.
+	b.sessions[b.handle] = session
 	b.logger.Info("authenticated as bridge", "did", b.bridgeDID)
 	return nil
 }
 
 // createSession opens a PDS session for an arbitrary handle/password and
-// returns the resulting access token + DID. Used both for the bridge's own
-// account and for any agent accounts the bridge is configured to sign on
-// behalf of.
-func (b *Bridge) createSession(handle, password string) (agentSession, error) {
+// returns the resulting session with access + refresh tokens. Used both for
+// the bridge's own account and for any agent accounts the bridge is
+// configured to sign on behalf of.
+func (b *Bridge) createSession(handle, password string) (*agentSession, error) {
 	body := fmt.Sprintf(`{"identifier":%q,"password":%q}`, handle, password)
 	resp, err := http.Post(
 		b.pdsURL+"/xrpc/com.atproto.server.createSession",
@@ -1075,23 +1101,30 @@ func (b *Bridge) createSession(handle, password string) (agentSession, error) {
 		bytes.NewReader([]byte(body)),
 	)
 	if err != nil {
-		return agentSession{}, fmt.Errorf("session request failed: %w", err)
+		return nil, fmt.Errorf("session request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return agentSession{}, fmt.Errorf("session creation failed: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("session creation failed: HTTP %d", resp.StatusCode)
 	}
 
 	var raw struct {
-		AccessJwt string `json:"accessJwt"`
-		DID       string `json:"did"`
+		AccessJwt  string `json:"accessJwt"`
+		RefreshJwt string `json:"refreshJwt"`
+		DID        string `json:"did"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return agentSession{}, fmt.Errorf("failed to decode session: %w", err)
+		return nil, fmt.Errorf("failed to decode session: %w", err)
 	}
 
-	return agentSession{DID: raw.DID, AccessToken: raw.AccessJwt}, nil
+	return &agentSession{
+		DID:          raw.DID,
+		AccessToken:  raw.AccessJwt,
+		RefreshToken: raw.RefreshJwt,
+		Handle:       handle,
+		Password:     password,
+	}, nil
 }
 
 // sessionFor returns the PDS session the bridge should use when publishing
@@ -1099,13 +1132,103 @@ func (b *Bridge) createSession(handle, password string) (agentSession, error) {
 // session if no per-agent credentials are registered for that handle. The
 // fallback preserves authorship under bridge.test, which is the legacy
 // behavior we're incrementally moving away from.
-func (b *Bridge) sessionFor(asHandle string) agentSession {
+func (b *Bridge) sessionFor(asHandle string) *agentSession {
+	b.sessionsMu.RLock()
+	defer b.sessionsMu.RUnlock()
 	if asHandle != "" {
 		if s, ok := b.sessions[asHandle]; ok {
 			return s
 		}
 	}
-	return agentSession{DID: b.bridgeDID, AccessToken: b.accessToken}
+	// Fall back to bridge's own session (also in the map after authenticate).
+	if s, ok := b.sessions[b.handle]; ok {
+		return s
+	}
+	return &agentSession{DID: b.bridgeDID, AccessToken: b.accessToken}
+}
+
+// refreshOrReauth refreshes the access token for a session. If the refresh
+// token is also expired, falls back to a full re-authentication using stored
+// credentials. The staleToken parameter is the token that triggered the 401 —
+// if another goroutine already refreshed, we skip the refresh.
+func (b *Bridge) refreshOrReauth(handle, staleToken string) error {
+	b.sessionsMu.Lock()
+	defer b.sessionsMu.Unlock()
+
+	session, ok := b.sessions[handle]
+	if !ok {
+		// No session for this handle — nothing to refresh.
+		return fmt.Errorf("no session for handle %q", handle)
+	}
+
+	if session.AccessToken != staleToken {
+		return nil // already refreshed by another goroutine
+	}
+
+	newSession, err := b.tryRefreshOrCreate(session.RefreshToken, session.Handle, session.Password)
+	if err != nil {
+		return err
+	}
+	newSession.Handle = session.Handle
+	newSession.Password = session.Password
+	b.sessions[handle] = newSession
+
+	// If this is the bridge's own session, update the top-level fields too.
+	if handle == b.handle {
+		b.accessToken = newSession.AccessToken
+		b.bridgeDID = newSession.DID
+	}
+
+	b.logger.Info("session refreshed", "handle", handle, "did", newSession.DID)
+	return nil
+}
+
+// tryRefreshOrCreate attempts to refresh using the refresh token. If that
+// fails, falls back to a full createSession with credentials.
+func (b *Bridge) tryRefreshOrCreate(refreshToken, handle, password string) (*agentSession, error) {
+	if refreshToken != "" {
+		session, err := b.refreshSession(refreshToken)
+		if err == nil {
+			return session, nil
+		}
+		b.logger.Warn("token refresh failed, re-authenticating", "handle", handle, "error", err)
+	}
+	return b.createSession(handle, password)
+}
+
+// refreshSession calls the PDS refreshSession endpoint to get new tokens.
+func (b *Bridge) refreshSession(refreshToken string) (*agentSession, error) {
+	req, err := http.NewRequest("POST",
+		b.pdsURL+"/xrpc/com.atproto.server.refreshSession", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+refreshToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("refresh request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("refresh failed: HTTP %d", resp.StatusCode)
+	}
+
+	var raw struct {
+		AccessJwt  string `json:"accessJwt"`
+		RefreshJwt string `json:"refreshJwt"`
+		DID        string `json:"did"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("failed to decode refresh response: %w", err)
+	}
+
+	return &agentSession{
+		DID:          raw.DID,
+		AccessToken:  raw.AccessJwt,
+		RefreshToken: raw.RefreshJwt,
+	}, nil
 }
 
 // --- Utilities ---

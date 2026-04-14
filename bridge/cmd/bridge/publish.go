@@ -66,7 +66,10 @@ func (b *Bridge) handlePublish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "handle is required", http.StatusBadRequest)
 		return
 	}
-	if _, ok := b.sessions[req.Handle]; !ok {
+	b.sessionsMu.RLock()
+	_, hasSession := b.sessions[req.Handle]
+	b.sessionsMu.RUnlock()
+	if !hasSession {
 		http.Error(w, "no credentials for handle: "+req.Handle, http.StatusForbidden)
 		return
 	}
