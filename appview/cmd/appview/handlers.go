@@ -27,6 +27,9 @@ func registerHandlers(mux *http.ServeMux, state *State, hub *Hub, poster *Poster
 	mux.HandleFunc("/api/agent", func(w http.ResponseWriter, r *http.Request) {
 		handleAgent(w, r, state)
 	})
+	mux.HandleFunc("/api/agent-card", func(w http.ResponseWriter, r *http.Request) {
+		handleAgentCard(w, r, discoveryURL, logger)
+	})
 	mux.HandleFunc("/api/post", func(w http.ResponseWriter, r *http.Request) {
 		handlePost(w, r, poster, logger)
 	})
@@ -121,6 +124,31 @@ func handleAgent(w http.ResponseWriter, r *http.Request, state *State) {
 		signals = []*Signal{}
 	}
 	writeJSON(w, signals)
+}
+
+// GET /api/agent-card?endpoint=<a2a_endpoint>
+func handleAgentCard(w http.ResponseWriter, r *http.Request, discoveryURL string, logger *slog.Logger) {
+	if r.Method != http.MethodGet {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	endpoint := r.URL.Query().Get("endpoint")
+	if endpoint == "" {
+		writeError(w, "missing endpoint parameter", http.StatusBadRequest)
+		return
+	}
+	cardURL := endpoint + "/.well-known/agent-card.json"
+	resp, err := http.Get(cardURL)
+	if err != nil {
+		logger.Warn("failed to fetch agent card", "url", cardURL, "error", err)
+		writeError(w, "failed to fetch agent card", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	setCORSAndJSON(w)
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
 // POST /api/post

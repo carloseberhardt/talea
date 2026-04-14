@@ -551,6 +551,15 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 		}
 	}
 
+	// For triage routing signals, "skip" triage as a parent — use the thread
+	// root (the original user request) so agent responses appear alongside
+	// triage rather than nested under it. Triage is visible in the thread as
+	// a routing annotation but doesn't act as a parent for the actual work.
+	dispatchParentURI, dispatchParentCID := uri, cid
+	if signalType == "routing" && did == b.sessionFor(b.triageHandle).DID {
+		dispatchParentURI, dispatchParentCID = rootURI, rootCID
+	}
+
 	for _, mention := range mentions {
 		agent := b.resolveMention(mention)
 		if agent == nil {
@@ -577,8 +586,8 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 		)
 
 		tc := &threadContext{
-			SignalURI:  uri,
-			SignalCID:  cid,
+			SignalURI:  dispatchParentURI,
+			SignalCID:  dispatchParentCID,
 			RootURI:    rootURI,
 			RootCID:    rootCID,
 			PublishURL: b.publishBaseURL + "/publish",
@@ -600,8 +609,10 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 			"result", result.Text,
 		)
 
-		// Publish reply signal for the audit trail.
-		if b.accessToken != "" {
+		// Publish reply signal for the audit trail. If the agent returned
+		// empty text (e.g., orchestrator dispatching via /publish), skip —
+		// the agent already published its own signal with correct threading.
+		if b.accessToken != "" && result.Text != "" {
 			ref := &a2aRef{
 				AgentDID:  agent.DID,
 				TaskID:    result.TaskID,
@@ -616,7 +627,7 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 			if forwardToAgent != nil {
 				replyMentions = []string{forwardToAgent.Handle}
 			}
-			if err := b.publishReplySignal(ctx, agent.Handle, uri, cid, rootURI, rootCID, agent.Name, result.Text, ref, replyMentions); err != nil {
+			if err := b.publishReplySignal(ctx, agent.Handle, dispatchParentURI, dispatchParentCID, rootURI, rootCID, agent.Name, result.Text, ref, replyMentions); err != nil {
 				b.logger.Error("failed to publish reply signal",
 					"agent", agent.Name,
 					"error", err,

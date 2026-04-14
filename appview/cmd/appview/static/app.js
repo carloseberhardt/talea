@@ -4,6 +4,8 @@ let threads = [];
 let currentThreadRoot = null;
 let currentThread = null;
 let selectedAgent = null;
+let currentView = 'threads'; // 'threads' | 'agent' | 'thread'
+let agentRegistry = [];       // cached agent list from bridge discovery
 let ws = null;
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────
@@ -29,23 +31,26 @@ function connectWS() {
       loadThreads();
 
       // If the new signal belongs to the currently open thread, append it.
-      if (currentThreadRoot && msg.threadRoot === currentThreadRoot) {
+      if (currentView === 'thread' && currentThreadRoot && msg.threadRoot === currentThreadRoot) {
         const card = renderSignalCard(msg.signal);
         const container = document.getElementById('content');
         const div = document.createElement('div');
         div.innerHTML = card;
         const node = div.firstElementChild;
-        // Indent via style attribute.
         if (msg.signal.depth) {
           node.style.marginLeft = `${msg.signal.depth * 20}px`;
         }
-        container.prepend(node);
+        container.appendChild(node);
+      }
+
+      // If viewing an agent profile and the signal is from that agent, refresh.
+      if (currentView === 'agent' && selectedAgent && msg.signal.authorHandle === selectedAgent) {
+        openAgentProfile(selectedAgent);
       }
     }
   };
 
   ws.onclose = () => {
-    // Reconnect after 3 s.
     setTimeout(connectWS, 3000);
   };
 
@@ -61,21 +66,19 @@ async function loadAgents() {
     const resp = await fetch('/api/agents');
     if (!resp.ok) return;
     const data = await resp.json();
-    // Bridge discovery returns { agents: [...] } or an array.
-    const agents = Array.isArray(data) ? data : (data.agents || []);
-    renderAgentList(agents);
+    agentRegistry = Array.isArray(data) ? data : (data.agents || []);
+    renderAgentList(agentRegistry);
   } catch (e) {
     console.warn('Failed to load agents:', e);
   }
 }
 
 async function loadThreads() {
-  const url = selectedAgent ? `/api/threads?agent=${encodeURIComponent(selectedAgent)}` : '/api/threads';
   try {
-    const resp = await fetch(url);
+    const resp = await fetch('/api/threads');
     if (!resp.ok) return;
     threads = await resp.json();
-    if (!currentThreadRoot) {
+    if (currentView === 'threads') {
       renderThreadList(threads);
     }
   } catch (e) {
@@ -85,6 +88,7 @@ async function loadThreads() {
 
 async function openThread(rootUri) {
   currentThreadRoot = rootUri;
+  currentView = 'thread';
   try {
     const resp = await fetch(`/api/thread?root=${encodeURIComponent(rootUri)}`);
     if (!resp.ok) return;
@@ -95,17 +99,66 @@ async function openThread(rootUri) {
   }
 }
 
+async function openAgentProfile(handle) {
+  selectedAgent = handle;
+  currentView = 'agent';
+  currentThreadRoot = null;
+  currentThread = null;
+
+  // Highlight sidebar selection.
+  document.querySelectorAll('.agent-item').forEach(el => {
+    el.classList.toggle('selected', el.dataset.handle === handle);
+  });
+
+  const content = document.getElementById('content');
+  const header = document.getElementById('main-title');
+  const backBtn = document.getElementById('back-btn');
+  backBtn.style.display = 'inline-block';
+  header.textContent = `@${handle}`;
+
+  // Fetch agent card + signals in parallel.
+  const agent = agentRegistry.find(a => a.handle === handle);
+  const [cardData, signalsData] = await Promise.all([
+    agent ? fetchAgentCard(agent.a2aEndpoint) : Promise.resolve(null),
+    fetchAgentSignals(handle),
+  ]);
+
+  renderAgentProfile(handle, agent, cardData, signalsData);
+}
+
+async function fetchAgentCard(endpoint) {
+  try {
+    const resp = await fetch(`/api/agent-card?endpoint=${encodeURIComponent(endpoint)}`);
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch (e) {
+    console.warn('Failed to fetch agent card:', e);
+    return null;
+  }
+}
+
+async function fetchAgentSignals(handle) {
+  try {
+    const resp = await fetch(`/api/agent?handle=${encodeURIComponent(handle)}`);
+    if (!resp.ok) return [];
+    return await resp.json();
+  } catch (e) {
+    console.warn('Failed to fetch agent signals:', e);
+    return [];
+  }
+}
+
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
 function renderAgentList(agents) {
   const section = document.getElementById('agent-list');
   section.innerHTML = '';
 
-  // "All" option
+  // "All" option — returns to thread list view
   const allEl = document.createElement('div');
   allEl.className = 'agent-item-all';
-  allEl.textContent = 'All agents';
-  allEl.onclick = () => selectAgent(null);
+  allEl.textContent = 'All threads';
+  allEl.onclick = () => goHome();
   section.appendChild(allEl);
 
   for (const agent of agents) {
@@ -114,7 +167,7 @@ function renderAgentList(agents) {
     el.className = 'agent-item' + (selectedAgent === handle ? ' selected' : '');
     el.textContent = '@' + handle;
     el.dataset.handle = handle;
-    el.onclick = () => selectAgent(handle);
+    el.onclick = () => openAgentProfile(handle);
     section.appendChild(el);
   }
 }
@@ -125,7 +178,7 @@ function renderThreadList(threadArr) {
   const backBtn = document.getElementById('back-btn');
 
   backBtn.style.display = 'none';
-  header.textContent = selectedAgent ? `Threads — @${selectedAgent}` : 'Live Threads';
+  header.textContent = 'Live Threads';
 
   if (!threadArr || threadArr.length === 0) {
     content.innerHTML = `
@@ -137,7 +190,7 @@ function renderThreadList(threadArr) {
   }
 
   content.innerHTML = threadArr.map(t => `
-    <div class="thread-card" onclick="openThread(${JSON.stringify(t.rootUri)})">
+    <div class="thread-card" onclick="openThread(${escHtml(JSON.stringify(t.rootUri))})">
       <div class="thread-preview">${escHtml(t.preview || '(no content)')}</div>
       <div class="thread-meta">
         <span>@${escHtml(t.authorHandle || 'unknown')}</span>
@@ -162,7 +215,6 @@ function renderThreadDetail(signals) {
     return;
   }
 
-  // Sort by indexedAt ascending so tree reads top-to-bottom.
   const sorted = signals.slice().sort((a, b) => new Date(a.indexedAt) - new Date(b.indexedAt));
 
   content.innerHTML = sorted.map(sig => {
@@ -171,9 +223,61 @@ function renderThreadDetail(signals) {
   }).join('');
 }
 
+function renderAgentProfile(handle, agent, card, signals) {
+  const content = document.getElementById('content');
+
+  // Profile header
+  const name = (card && card.name) || (agent && agent.name) || handle;
+  const desc = (card && card.description) || '';
+  const skills = (card && card.skills) || [];
+
+  let profileHtml = `
+    <div class="agent-profile">
+      <div class="agent-profile-header">
+        <div class="agent-profile-name">${escHtml(name)}</div>
+        <div class="agent-profile-handle">@${escHtml(handle)}</div>
+        ${desc ? `<div class="agent-profile-desc">${escHtml(desc)}</div>` : ''}
+      </div>`;
+
+  if (skills.length > 0) {
+    profileHtml += `<div class="agent-profile-skills">`;
+    for (const skill of skills) {
+      profileHtml += `
+        <div class="agent-skill">
+          <span class="agent-skill-name">${escHtml(skill.name || skill.id || '')}</span>
+          ${skill.description ? `<span class="agent-skill-desc">${escHtml(skill.description)}</span>` : ''}
+        </div>`;
+    }
+    profileHtml += `</div>`;
+  }
+
+  profileHtml += `</div>`;
+
+  // Activity feed
+  if (!signals || signals.length === 0) {
+    profileHtml += `
+      <div class="empty-state">
+        <strong>No activity yet</strong>
+        <p>Signals from @${escHtml(handle)} will appear here.</p>
+      </div>`;
+  } else {
+    profileHtml += `<div class="agent-activity-header">Activity</div>`;
+    // Most recent first.
+    const sorted = signals.slice().sort((a, b) => new Date(b.indexedAt) - new Date(a.indexedAt));
+    for (const sig of sorted) {
+      profileHtml += `
+        <div class="agent-activity-item" onclick="openThread(${escHtml(JSON.stringify(sig.rootUri))})">
+          ${renderSignalCard(sig)}
+        </div>`;
+    }
+  }
+
+  content.innerHTML = profileHtml;
+}
+
 function renderSignalCard(sig) {
   const mentionsHtml = sig.mentions && sig.mentions.length
-    ? `<div class="signal-mentions">→ ${sig.mentions.map(m => escHtml(m)).join(', ')}</div>`
+    ? `<div class="signal-mentions">\u2192 ${sig.mentions.map(m => escHtml(m)).join(', ')}</div>`
     : '';
 
   const ctxHtml = sig.a2a && sig.a2a.contextId
@@ -201,25 +305,27 @@ function typeBadge(type) {
 
 // ── Actions ──────────────────────────────────────────────────────────────────
 
-function selectAgent(handle) {
-  selectedAgent = handle;
-
-  // Update sidebar selection highlight.
-  document.querySelectorAll('.agent-item').forEach(el => {
-    el.classList.toggle('selected', el.dataset.handle === handle);
-  });
-
-  // If in thread detail, go back to thread list first.
+function goHome() {
+  selectedAgent = null;
   currentThreadRoot = null;
   currentThread = null;
+  currentView = 'threads';
 
-  loadThreads().then(() => renderThreadList(threads));
+  document.querySelectorAll('.agent-item').forEach(el => {
+    el.classList.remove('selected');
+  });
+
+  renderThreadList(threads);
 }
 
 function goBack() {
-  currentThreadRoot = null;
-  currentThread = null;
-  renderThreadList(threads);
+  if (currentView === 'thread' && selectedAgent) {
+    // Thread → back to agent profile
+    openAgentProfile(selectedAgent);
+  } else {
+    // Thread or agent → back to thread list
+    goHome();
+  }
 }
 
 async function submitPost() {
@@ -231,7 +337,7 @@ async function submitPost() {
   const mentions = extractMentions(text);
 
   btn.disabled = true;
-  btn.textContent = 'Posting…';
+  btn.textContent = 'Posting\u2026';
 
   try {
     const resp = await fetch('/api/post', {
@@ -245,7 +351,6 @@ async function submitPost() {
       return;
     }
     input.value = '';
-    // Thread list will refresh via WebSocket event.
   } catch (e) {
     alert('Post failed: ' + e.message);
   } finally {

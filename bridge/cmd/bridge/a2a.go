@@ -86,17 +86,17 @@ func extractDispatchResult(result a2a.SendMessageResult) (*a2aDispatchResult, er
 		if r.Status.Message != nil {
 			text = partsToText(r.Status.Message.Parts)
 		}
-		if text == "" && len(r.History) > 0 {
-			// Fall back to the last agent message in history
+		if text == "" && r.Status.Message == nil && len(r.History) > 0 {
+			// No status message at all — fall back to the last agent message
+			// in history. If the status message exists but is empty, the agent
+			// intentionally returned nothing (e.g., orchestrator dispatching
+			// via /publish) — don't override with history or fallback text.
 			for i := len(r.History) - 1; i >= 0; i-- {
 				if r.History[i].Role == a2a.MessageRoleAgent {
 					text = partsToText(r.History[i].Parts)
 					break
 				}
 			}
-		}
-		if text == "" {
-			text = fmt.Sprintf("task %s completed (state: %s)", r.ID, r.Status.State)
 		}
 		return &a2aDispatchResult{
 			Text:      text,

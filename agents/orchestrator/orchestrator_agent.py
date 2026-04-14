@@ -269,11 +269,14 @@ class OrchestratorExecutor(AgentExecutor):
             await updater.complete(new_agent_text_message("I didn't receive a message. How can I help?"))
             return
 
-        # Extract and cache thread context from the initial dispatch.
+        # Cache thread context from the INITIAL dispatch only. Continuation
+        # messages carry updated thread context (pointing at the latest result
+        # signal), but we want all orchestrator sub-dispatches to parent off
+        # the original signal (the triage routing) for a clean tree structure.
         tc = extract_thread_context(context)
-        if tc and context.context_id:
+        if tc and context.context_id and context.context_id not in self._thread_contexts:
             self._thread_contexts[context.context_id] = tc
-            log.info("thread context received: %s", {k: v[:60] if isinstance(v, str) else v for k, v in tc.items()})
+            log.info("thread context cached: %s", {k: v[:60] if isinstance(v, str) else v for k, v in tc.items()})
 
         # Look up cached thread context for this context_id.
         thread_ctx = self._thread_contexts.get(context.context_id) if context.context_id else None
@@ -298,7 +301,30 @@ class OrchestratorExecutor(AgentExecutor):
         # Check if it's a dispatch instruction.
         instruction = parse_dispatch_instruction(reply)
         if instruction is None:
-            # Final answer — return it. The bridge publishes it as a reply signal.
+            # Final answer (or empty LLM response).
+            if not reply:
+                reply = "Sorry, I wasn't able to generate a response."
+
+            # Publish via /publish so it threads as a sibling of the routing
+            # signals (under the original parent), rather than nesting under
+            # the last specialist result.
+            if thread_ctx:
+                publish_url = thread_ctx.get("publishUrl", f"{BRIDGE_DISCOVERY_URL}/publish")
+                reply_ref = {
+                    "parentUri": thread_ctx["signalUri"],
+                    "parentCid": thread_ctx["signalCid"],
+                    "rootUri": thread_ctx["rootUri"],
+                    "rootCid": thread_ctx["rootCid"],
+                }
+                async with httpx.AsyncClient() as http:
+                    await publish_signal(
+                        http, publish_url, self._own_handle,
+                        "result", reply, reply=reply_ref,
+                    )
+                # Return empty so the bridge doesn't publish a duplicate reply.
+                await updater.complete(new_agent_text_message(""))
+                return
+            # No thread context — fall back to A2A response (bridge publishes).
             await updater.complete(new_agent_text_message(reply))
             return
 
@@ -337,18 +363,12 @@ class OrchestratorExecutor(AgentExecutor):
             )
 
         if result:
-            # Update thread context: the /publish signal is now the latest
-            # parent for subsequent signals in this thread.
-            thread_ctx["signalUri"] = result["uri"]
-            thread_ctx["signalCid"] = result["cid"]
             log.info("dispatch published: uri=%s", result.get("uri"))
 
-        # Return a brief status. The bridge publishes this as a result signal
-        # (which is skipped on the firehose — it's just an audit record).
-        # The real work continues when the specialist result arrives.
-        await updater.complete(
-            new_agent_text_message(f"Dispatching to {', '.join(instruction['mentions'])}...")
-        )
+        # Return empty — the bridge skips publishing a reply signal when the
+        # A2A result text is empty. The meaningful signal is the /publish
+        # routing signal above; no need for a duplicate "Dispatching..." audit.
+        await updater.complete(new_agent_text_message(""))
 
     async def _get_agents_section(self) -> str:
         """Discover agents and format for prompt. Cached per process."""
