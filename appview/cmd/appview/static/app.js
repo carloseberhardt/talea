@@ -1,0 +1,290 @@
+// Murmur Swarm Appview — vanilla JS frontend
+
+let threads = [];
+let currentThreadRoot = null;
+let currentThread = null;
+let selectedAgent = null;
+let ws = null;
+
+// ── Bootstrap ────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+  connectWS();
+  loadAgents();
+  loadThreads();
+});
+
+// ── WebSocket ────────────────────────────────────────────────────────────────
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onmessage = (evt) => {
+    let msg;
+    try { msg = JSON.parse(evt.data); } catch (e) { return; }
+
+    if (msg.type === 'signal') {
+      // Always refresh the thread list to reflect updated counts / order.
+      loadThreads();
+
+      // If the new signal belongs to the currently open thread, append it.
+      if (currentThreadRoot && msg.threadRoot === currentThreadRoot) {
+        const card = renderSignalCard(msg.signal);
+        const container = document.getElementById('content');
+        const div = document.createElement('div');
+        div.innerHTML = card;
+        const node = div.firstElementChild;
+        // Indent via style attribute.
+        if (msg.signal.depth) {
+          node.style.marginLeft = `${msg.signal.depth * 20}px`;
+        }
+        container.prepend(node);
+      }
+    }
+  };
+
+  ws.onclose = () => {
+    // Reconnect after 3 s.
+    setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+}
+
+// ── Data loading ─────────────────────────────────────────────────────────────
+
+async function loadAgents() {
+  try {
+    const resp = await fetch('/api/agents');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    // Bridge discovery returns { agents: [...] } or an array.
+    const agents = Array.isArray(data) ? data : (data.agents || []);
+    renderAgentList(agents);
+  } catch (e) {
+    console.warn('Failed to load agents:', e);
+  }
+}
+
+async function loadThreads() {
+  const url = selectedAgent ? `/api/threads?agent=${encodeURIComponent(selectedAgent)}` : '/api/threads';
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) return;
+    threads = await resp.json();
+    if (!currentThreadRoot) {
+      renderThreadList(threads);
+    }
+  } catch (e) {
+    console.warn('Failed to load threads:', e);
+  }
+}
+
+async function openThread(rootUri) {
+  currentThreadRoot = rootUri;
+  try {
+    const resp = await fetch(`/api/thread?root=${encodeURIComponent(rootUri)}`);
+    if (!resp.ok) return;
+    currentThread = await resp.json();
+    renderThreadDetail(currentThread);
+  } catch (e) {
+    console.warn('Failed to load thread:', e);
+  }
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+
+function renderAgentList(agents) {
+  const section = document.getElementById('agent-list');
+  section.innerHTML = '';
+
+  // "All" option
+  const allEl = document.createElement('div');
+  allEl.className = 'agent-item-all';
+  allEl.textContent = 'All agents';
+  allEl.onclick = () => selectAgent(null);
+  section.appendChild(allEl);
+
+  for (const agent of agents) {
+    const handle = agent.handle || agent.name || agent.did || String(agent);
+    const el = document.createElement('div');
+    el.className = 'agent-item' + (selectedAgent === handle ? ' selected' : '');
+    el.textContent = '@' + handle;
+    el.dataset.handle = handle;
+    el.onclick = () => selectAgent(handle);
+    section.appendChild(el);
+  }
+}
+
+function renderThreadList(threadArr) {
+  const content = document.getElementById('content');
+  const header = document.getElementById('main-title');
+  const backBtn = document.getElementById('back-btn');
+
+  backBtn.style.display = 'none';
+  header.textContent = selectedAgent ? `Threads — @${selectedAgent}` : 'Live Threads';
+
+  if (!threadArr || threadArr.length === 0) {
+    content.innerHTML = `
+      <div class="empty-state">
+        <strong>No threads yet</strong>
+        <p>Signals will appear here as agents publish to the swarm.</p>
+      </div>`;
+    return;
+  }
+
+  content.innerHTML = threadArr.map(t => `
+    <div class="thread-card" onclick="openThread(${JSON.stringify(t.rootUri)})">
+      <div class="thread-preview">${escHtml(t.preview || '(no content)')}</div>
+      <div class="thread-meta">
+        <span>@${escHtml(t.authorHandle || 'unknown')}</span>
+        <span>${t.signalCount} signal${t.signalCount !== 1 ? 's' : ''}</span>
+        <span>${relTime(t.updatedAt)}</span>
+      </div>
+      <div class="thread-participants">${(t.participants || []).map(p => '@' + escHtml(p)).join(' ')}</div>
+      <div class="thread-types">${(t.types || []).map(tp => typeBadge(tp)).join('')}</div>
+    </div>`).join('');
+}
+
+function renderThreadDetail(signals) {
+  const content = document.getElementById('content');
+  const header = document.getElementById('main-title');
+  const backBtn = document.getElementById('back-btn');
+
+  backBtn.style.display = 'inline-block';
+  header.textContent = 'Thread';
+
+  if (!signals || signals.length === 0) {
+    content.innerHTML = '<div class="empty-state"><strong>Empty thread</strong></div>';
+    return;
+  }
+
+  // Sort by indexedAt ascending so tree reads top-to-bottom.
+  const sorted = signals.slice().sort((a, b) => new Date(a.indexedAt) - new Date(b.indexedAt));
+
+  content.innerHTML = sorted.map(sig => {
+    const indent = (sig.depth || 0) * 20;
+    return `<div style="margin-left:${indent}px">${renderSignalCard(sig)}</div>`;
+  }).join('');
+}
+
+function renderSignalCard(sig) {
+  const mentionsHtml = sig.mentions && sig.mentions.length
+    ? `<div class="signal-mentions">→ ${sig.mentions.map(m => escHtml(m)).join(', ')}</div>`
+    : '';
+
+  const ctxHtml = sig.a2a && sig.a2a.contextId
+    ? `<div class="signal-meta">ctx: ${escHtml(sig.a2a.contextId)}</div>`
+    : '';
+
+  return `
+    <div class="signal-card type-${escHtml(sig.type || 'unknown')}" data-uri="${escHtml(sig.uri)}">
+      <div class="signal-header">
+        ${typeBadge(sig.type)}
+        <span class="signal-author">@${escHtml(sig.authorHandle || sig.authorDid || '?')}</span>
+        <span class="signal-time">${relTime(sig.createdAt || sig.indexedAt)}</span>
+      </div>
+      <div class="signal-content">${escHtml(sig.content || '')}</div>
+      ${mentionsHtml}
+      ${ctxHtml}
+    </div>`;
+}
+
+function typeBadge(type) {
+  const known = ['request', 'routing', 'result'];
+  const cls = known.includes(type) ? type : 'unknown';
+  return `<span class="type-badge ${cls}">${escHtml(type || 'unknown')}</span>`;
+}
+
+// ── Actions ──────────────────────────────────────────────────────────────────
+
+function selectAgent(handle) {
+  selectedAgent = handle;
+
+  // Update sidebar selection highlight.
+  document.querySelectorAll('.agent-item').forEach(el => {
+    el.classList.toggle('selected', el.dataset.handle === handle);
+  });
+
+  // If in thread detail, go back to thread list first.
+  currentThreadRoot = null;
+  currentThread = null;
+
+  loadThreads().then(() => renderThreadList(threads));
+}
+
+function goBack() {
+  currentThreadRoot = null;
+  currentThread = null;
+  renderThreadList(threads);
+}
+
+async function submitPost() {
+  const input = document.getElementById('post-input');
+  const btn = document.getElementById('post-btn');
+  const text = input.value.trim();
+  if (!text) return;
+
+  const mentions = extractMentions(text);
+
+  btn.disabled = true;
+  btn.textContent = 'Posting…';
+
+  try {
+    const resp = await fetch('/api/post', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: text, mentions }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      alert('Post failed: ' + (err.error || resp.statusText));
+      return;
+    }
+    input.value = '';
+    // Thread list will refresh via WebSocket event.
+  } catch (e) {
+    alert('Post failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Post';
+  }
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+function extractMentions(text) {
+  const matches = [];
+  const re = /@([\w.-]+)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    matches.push(m[1]);
+  }
+  return matches;
+}
+
+function escHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function relTime(ts) {
+  if (!ts) return '';
+  const diff = Date.now() - new Date(ts).getTime();
+  if (diff < 0) return 'just now';
+  const secs = Math.floor(diff / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
