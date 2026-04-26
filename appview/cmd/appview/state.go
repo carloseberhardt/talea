@@ -50,6 +50,7 @@ type ThreadSummary struct {
 	AuthorHandle string    `json:"authorHandle"`
 	SignalCount  int       `json:"signalCount"`
 	Participants []string  `json:"participants"`
+	Mentions     []string  `json:"mentions,omitempty"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 	Types        []string  `json:"types"`
 }
@@ -169,11 +170,16 @@ func buildSummary(t *Thread) ThreadSummary {
 		preview = preview[:120]
 	}
 
-	// Collect unique handles (up to 5) and unique types.
+	// Collect unique handles (up to 5), unique types, and the union of all
+	// mentions across signals. Mentions matter for the feed view: a thread
+	// where the user is mentioned but hasn't replied yet would otherwise be
+	// invisible (no participant entry, no authorship).
 	seen := make(map[string]bool)
 	seenTypes := make(map[string]bool)
+	seenMentions := make(map[string]bool)
 	var participants []string
 	var types []string
+	var mentions []string
 
 	for _, sig := range t.Signals {
 		if sig.AuthorHandle != "" && !seen[sig.AuthorHandle] {
@@ -186,6 +192,12 @@ func buildSummary(t *Thread) ThreadSummary {
 			seenTypes[sig.Type] = true
 			types = append(types, sig.Type)
 		}
+		for _, m := range sig.Mentions {
+			if m != "" && !seenMentions[m] {
+				seenMentions[m] = true
+				mentions = append(mentions, m)
+			}
+		}
 	}
 
 	return ThreadSummary{
@@ -194,6 +206,7 @@ func buildSummary(t *Thread) ThreadSummary {
 		AuthorHandle: root.AuthorHandle,
 		SignalCount:  len(t.Signals),
 		Participants: participants,
+		Mentions:     mentions,
 		UpdatedAt:    t.UpdatedAt,
 		Types:        types,
 	}
@@ -223,6 +236,20 @@ func (s *State) GetThread(rootURI string) []*Signal {
 	}
 
 	return signals
+}
+
+// GetSignalByURI returns the indexed signal with the given AT-URI, or nil if unknown.
+func (s *State) GetSignalByURI(uri string) *Signal {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, thread := range s.threads {
+		for _, sig := range thread.Signals {
+			if sig.URI == uri {
+				return sig
+			}
+		}
+	}
+	return nil
 }
 
 // GetAuthorSignals returns all indexed signals for a given handle.

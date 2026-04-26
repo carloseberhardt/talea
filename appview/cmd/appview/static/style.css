@@ -431,6 +431,112 @@ body {
   font-size: 13px;
 }
 
+/* ── Logged-in indicator ─────────────────────────────── */
+
+.me-indicator {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── Tab bar ─────────────────────────────────────────── */
+
+#tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+.tab-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tab-btn:hover {
+  background: var(--hover-bg);
+}
+
+.tab-btn.selected {
+  background: var(--selected-bg);
+  border-color: var(--selected-border);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ── Reply ───────────────────────────────────────────── */
+
+.reply-btn {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.reply-btn:hover {
+  background: var(--hover-bg);
+  color: var(--text);
+}
+
+.reply-form {
+  margin: 6px 0 10px 24px;
+  padding: 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--selected-border);
+  border-radius: 6px;
+  animation: slideIn 0.15s ease-out;
+}
+
+.reply-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.reply-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.reply-cancel,
+.reply-submit {
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+
+.reply-cancel {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.reply-submit {
+  background: var(--color-request);
+  color: white;
+  border-color: var(--color-request);
+}
+
+.reply-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* ── Animation ───────────────────────────────────────── */
 
 @keyframes slideIn {

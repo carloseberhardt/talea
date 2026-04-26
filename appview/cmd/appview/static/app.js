@@ -5,6 +5,8 @@ let currentThreadRoot = null;
 let currentThread = null;
 let selectedAgent = null;
 let currentView = 'threads'; // 'threads' | 'agent' | 'thread'
+let currentTab = 'feed';     // 'feed' | 'firehose'
+let me = { handle: '', did: '' };
 let agentRegistry = [];       // cached agent list from bridge discovery
 let ws = null;
 
@@ -12,6 +14,7 @@ let ws = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
+  loadMe();
   loadAgents();
   loadThreads();
 });
@@ -60,6 +63,20 @@ function connectWS() {
 }
 
 // ── Data loading ─────────────────────────────────────────────────────────────
+
+async function loadMe() {
+  try {
+    const resp = await fetch('/api/me');
+    if (!resp.ok) return;
+    me = await resp.json();
+    const el = document.getElementById('me-indicator');
+    if (el) {
+      el.textContent = me.handle ? `logged in as @${me.handle}` : 'not authenticated';
+    }
+  } catch (e) {
+    console.warn('Failed to load /api/me:', e);
+  }
+}
 
 async function loadAgents() {
   try {
@@ -113,7 +130,9 @@ async function openAgentProfile(handle) {
   const content = document.getElementById('content');
   const header = document.getElementById('main-title');
   const backBtn = document.getElementById('back-btn');
+  const tabBar = document.getElementById('tab-bar');
   backBtn.style.display = 'inline-block';
+  if (tabBar) tabBar.style.display = 'none';
   header.textContent = `@${handle}`;
 
   // Fetch agent card + signals in parallel.
@@ -176,20 +195,36 @@ function renderThreadList(threadArr) {
   const content = document.getElementById('content');
   const header = document.getElementById('main-title');
   const backBtn = document.getElementById('back-btn');
+  const tabBar = document.getElementById('tab-bar');
 
   backBtn.style.display = 'none';
   header.textContent = 'Live Threads';
+  if (tabBar) tabBar.style.display = 'flex';
 
-  if (!threadArr || threadArr.length === 0) {
+  let filtered = threadArr || [];
+  if (currentTab === 'feed' && me.handle) {
+    const myKeys = [me.handle, me.did].filter(Boolean);
+    filtered = filtered.filter(t => {
+      if (t.authorHandle === me.handle) return true;
+      const participants = t.participants || [];
+      const mentions = t.mentions || [];
+      return myKeys.some(k => participants.includes(k) || mentions.includes(k));
+    });
+  }
+
+  if (filtered.length === 0) {
+    const msg = currentTab === 'feed'
+      ? 'Post something or get mentioned by an agent to see threads here.'
+      : 'Signals will appear here as agents publish to the swarm.';
     content.innerHTML = `
       <div class="empty-state">
         <strong>No threads yet</strong>
-        <p>Signals will appear here as agents publish to the swarm.</p>
+        <p>${msg}</p>
       </div>`;
     return;
   }
 
-  content.innerHTML = threadArr.map(t => `
+  content.innerHTML = filtered.map(t => `
     <div class="thread-card" onclick="openThread(${escHtml(JSON.stringify(t.rootUri))})">
       <div class="thread-preview">${escHtml(t.preview || '(no content)')}</div>
       <div class="thread-meta">
@@ -206,8 +241,10 @@ function renderThreadDetail(signals) {
   const content = document.getElementById('content');
   const header = document.getElementById('main-title');
   const backBtn = document.getElementById('back-btn');
+  const tabBar = document.getElementById('tab-bar');
 
   backBtn.style.display = 'inline-block';
+  if (tabBar) tabBar.style.display = 'none';
   header.textContent = 'Thread';
 
   if (!signals || signals.length === 0) {
@@ -284,12 +321,18 @@ function renderSignalCard(sig) {
     ? `<div class="signal-meta">ctx: ${escHtml(sig.a2a.contextId)}</div>`
     : '';
 
+  const uriAttr = escHtml(sig.uri);
+  const replyBtn = me.handle && currentView === 'thread'
+    ? `<button class="reply-btn" onclick="openReply(event, '${uriAttr}')">Reply</button>`
+    : '';
+
   return `
-    <div class="signal-card type-${escHtml(sig.type || 'unknown')}" data-uri="${escHtml(sig.uri)}">
+    <div class="signal-card type-${escHtml(sig.type || 'unknown')}" data-uri="${uriAttr}">
       <div class="signal-header">
         ${typeBadge(sig.type)}
         <span class="signal-author">@${escHtml(sig.authorHandle || sig.authorDid || '?')}</span>
         <span class="signal-time">${relTime(sig.createdAt || sig.indexedAt)}</span>
+        ${replyBtn}
       </div>
       <div class="signal-content">${escHtml(sig.content || '')}</div>
       ${mentionsHtml}
@@ -304,6 +347,79 @@ function typeBadge(type) {
 }
 
 // ── Actions ──────────────────────────────────────────────────────────────────
+
+function selectTab(tab) {
+  if (tab !== 'feed' && tab !== 'firehose') return;
+  currentTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(el => {
+    el.classList.toggle('selected', el.dataset.tab === tab);
+  });
+  if (currentView === 'threads') {
+    renderThreadList(threads);
+  }
+}
+
+function openReply(evt, parentUri) {
+  if (evt) evt.stopPropagation();
+  // Remove any existing reply form before opening a new one.
+  const existing = document.querySelector('.reply-form');
+  if (existing) existing.remove();
+
+  const card = document.querySelector(`.signal-card[data-uri="${cssEscape(parentUri)}"]`);
+  if (!card) return;
+
+  const form = document.createElement('div');
+  form.className = 'reply-form';
+  form.innerHTML = `
+    <textarea class="reply-input" rows="2" placeholder="Reply… (use @handle to mention agents)"></textarea>
+    <div class="reply-actions">
+      <button class="reply-cancel" onclick="closeReply(this)">Cancel</button>
+      <button class="reply-submit" onclick="submitReply(this, ${JSON.stringify(parentUri).replace(/"/g, '&quot;')})">Reply</button>
+    </div>`;
+  card.insertAdjacentElement('afterend', form);
+  form.querySelector('textarea').focus();
+}
+
+function closeReply(btn) {
+  const form = btn.closest('.reply-form');
+  if (form) form.remove();
+}
+
+async function submitReply(btn, parentUri) {
+  const form = btn.closest('.reply-form');
+  const textarea = form.querySelector('textarea');
+  const text = textarea.value.trim();
+  if (!text) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Posting…';
+
+  const mentions = extractMentions(text);
+
+  try {
+    const resp = await fetch('/api/post', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: text, mentions, parentUri }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      alert('Reply failed: ' + (err.error || resp.statusText));
+      btn.disabled = false;
+      btn.textContent = 'Reply';
+      return;
+    }
+    form.remove();
+  } catch (e) {
+    alert('Reply failed: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = 'Reply';
+  }
+}
+
+function cssEscape(s) {
+  return String(s).replace(/([!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~])/g, '\\$1');
+}
 
 function goHome() {
   selectedAgent = null;

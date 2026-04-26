@@ -30,20 +30,12 @@ const (
 )
 
 type Bridge struct {
-	logger   *slog.Logger
-	relayURL string
-	pdsURL   string
-	bridgeDID string
-	registry *AgentRegistry
-
-	// Triage agent: looked up by handle in the registry. The bridge calls it
-	// over A2A when a tagless signal arrives with no continuation context.
-	triageHandle string
-
-	// Orchestrator: the fallback agent. If triage returns empty mentions
-	// (despite being told not to), the bridge routes to this handle as a
-	// safety net. Also logged in the routing signal for audit.
-	orchestratorHandle string
+	logger     *slog.Logger
+	relayURL   string
+	pdsURL     string
+	appviewURL string
+	bridgeDID  string
+	registry   *AgentRegistry
 
 	// The base URL of the discovery/publish server (e.g., "http://localhost:2471").
 	// Passed to agents in thread context so they can call POST /publish.
@@ -57,8 +49,7 @@ type Bridge struct {
 
 	// Per-agent PDS sessions, keyed by handle. The bridge holds credentials
 	// for agents we want to publish on behalf of (so the records they're
-	// authored under match the agent's identity, not the bridge's). Today
-	// this only contains triage; future slices will add more.
+	// authored under match the agent's identity, not the bridge's).
 	sessions   map[string]*agentSession
 	sessionsMu sync.RWMutex
 }
@@ -89,26 +80,24 @@ func main() {
 
 	relayURL := envOrDefault("RELAY_URL", "ws://localhost:2470")
 	pdsURL := envOrDefault("PDS_URL", "https://pds.murmur.internal")
+	appviewURL := envOrDefault("APPVIEW_URL", "http://localhost:2472")
 	bridgeHandle := envOrDefault("BRIDGE_HANDLE", "bridge.test")
 	bridgePassword := envOrDefault("BRIDGE_PASSWORD", "bridge-sandbox-pass")
 	discoveryAddr := envOrDefault("DISCOVERY_ADDR", ":2471")
-	triageHandle := envOrDefault("TRIAGE_HANDLE", "triage.test")
-	orchestratorHandle := envOrDefault("ORCHESTRATOR_HANDLE", "orchestrator.test")
 	agentCredsRaw := os.Getenv("MURMUR_AGENT_CREDS")
 
 	registry := NewAgentRegistry(logger)
 
 	b := &Bridge{
-		logger:             logger,
-		relayURL:           relayURL,
-		pdsURL:             pdsURL,
-		registry:           registry,
-		triageHandle:       triageHandle,
-		orchestratorHandle: orchestratorHandle,
-		handle:             bridgeHandle,
-		password:           bridgePassword,
-		sessions:           make(map[string]*agentSession),
-		publishBaseURL:     "http://localhost" + discoveryAddr,
+		logger:         logger,
+		relayURL:       relayURL,
+		pdsURL:         pdsURL,
+		appviewURL:     appviewURL,
+		registry:       registry,
+		handle:         bridgeHandle,
+		password:       bridgePassword,
+		sessions:       make(map[string]*agentSession),
+		publishBaseURL: "http://localhost" + discoveryAddr,
 	}
 
 	if err := b.authenticate(); err != nil {
@@ -155,12 +144,6 @@ func main() {
 		}
 	}
 
-	if _, ok := b.sessions[triageHandle]; !ok {
-		logger.Warn("no credentials for triage handle in MURMUR_AGENT_CREDS — routing signals will be authored by the bridge",
-			"triage_handle", triageHandle,
-		)
-	}
-
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
@@ -175,9 +158,8 @@ func main() {
 	logger.Info("bridge starting",
 		"relay", relayURL,
 		"pds", pdsURL,
+		"appview", appviewURL,
 		"discovery", discoveryAddr,
-		"triage_handle", triageHandle,
-		"orchestrator_handle", orchestratorHandle,
 		"did", b.bridgeDID,
 		"registered_agents", len(registry.All()),
 	)
@@ -427,11 +409,23 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 
 	uri := fmt.Sprintf("at://%s/%s/%s", did, signalCollection, rkey)
 
+	// Extract the current signal's own a2a back-reference. Set by agents via
+	// /publish when they want results from this dispatch forwarded back to them.
+	// This also structurally distinguishes triage-authored routing signals
+	// (no a2a field) from orchestrator-authored routing signals (carry a2a).
+	var ownA2AAgentDID string
+	if raw, ok := record["a2a"].(map[string]any); ok {
+		if s, ok := raw["agentDid"].(string); ok {
+			ownA2AAgentDID = s
+		}
+	}
+
 	// Triage routing signals carry the rationale as content, not the original
 	// query. Fetch the parent signal's content so we dispatch agents with the
-	// actual user message. Other routing signals (e.g., from the orchestrator
-	// via /publish) have the intended sub-query as content — leave those alone.
-	if signalType == "routing" && did == b.sessionFor(b.triageHandle).DID {
+	// actual user message. Orchestrator routing signals (published via /publish)
+	// carry their intended sub-query as content and include an a2a back-ref —
+	// leave those alone.
+	if signalType == "routing" && ownA2AAgentDID == "" {
 		if parentURI := parentURIOf(record); parentURI != "" {
 			parentRec, err := b.getRecord(ctx, parentURI)
 			if err == nil {
@@ -450,11 +444,12 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 	)
 
 	// Fetch parent a2a info if this is a reply. Used for:
-	//   (1) Implicit chat continuation — if the parent is an agent reply and
-	//       there are no explicit mentions, route to that agent.
+	//   (1) Implicit chat continuation — if the parent was authored by an
+	//       agent and there are no explicit mentions, route to that agent.
 	//   (2) Context continuity — pass the parent's contextId so the agent
 	//       resumes the same conversation.
 	var parentA2A *a2aRef
+	var parentAuthorDID string
 	if parentURI := parentURIOf(record); parentURI != "" {
 		a, err := b.fetchParentA2A(ctx, parentURI)
 		if err != nil {
@@ -462,79 +457,53 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 				"parent_uri", parentURI, "error", err)
 		}
 		parentA2A = a
+		parentAuthorDID = authorDIDFromURI(parentURI)
 	}
 
 	// Implicit chat continuation: only for request-type signals. If no
-	// explicit mentions and the parent is an agent reply, treat that agent
-	// as the sole implicit mention. Result and routing signals never trigger
-	// implicit continuation — result signals are audit records, and routing
-	// signals always carry explicit mentions.
-	if len(mentions) == 0 && signalType == "request" && parentA2A != nil && parentA2A.AgentDID != "" {
-		if agent := b.registry.FindByDID(parentA2A.AgentDID); agent != nil {
-			b.logger.Info("implicit mention from parent agent",
-				"signal_uri", uri,
-				"agent", agent.Name,
-				"did", parentA2A.AgentDID,
-			)
-			mentions = []string{parentA2A.AgentDID}
+	// explicit mentions and the parent was authored by a registered agent,
+	// treat that agent as the sole implicit mention.
+	//
+	// We accept two signals that "the parent was an agent": (a) the parent
+	// has an a2a back-reference (set on result signals when an agent
+	// produced them through the bridge); (b) the parent's author DID — read
+	// directly from the at:// URI — matches a registered agent. Case (b)
+	// handles agent-initiated requests (e.g., threeaday's nudges), which
+	// are request-type signals and therefore carry no a2a field per the
+	// lexicon. Without (b), replies to those nudges fall through to triage
+	// even when the agent to address is structurally obvious.
+	//
+	// Result and routing signals never trigger implicit continuation —
+	// result signals are audit records, and routing signals always carry
+	// explicit mentions.
+	if len(mentions) == 0 && signalType == "request" {
+		implicitDID := ""
+		if parentA2A != nil && parentA2A.AgentDID != "" {
+			implicitDID = parentA2A.AgentDID
+		} else if parentAuthorDID != "" {
+			implicitDID = parentAuthorDID
 		}
-	}
-
-	// Extract the current signal's own a2a back-reference. Set by agents via
-	// /publish when they want results from this dispatch forwarded back to them.
-	// Only used for routing signals — when a routing signal has a2a.agentDid,
-	// the dispatch result reply will carry an explicit mention for that agent
-	// so rule #1 delivers the result without needing implicit continuation.
-	var ownA2AAgentDID string
-	if raw, ok := record["a2a"].(map[string]any); ok {
-		if s, ok := raw["agentDid"].(string); ok {
-			ownA2AAgentDID = s
+		if implicitDID != "" {
+			if agent := b.registry.FindByDID(implicitDID); agent != nil {
+				b.logger.Info("implicit mention from parent agent",
+					"signal_uri", uri,
+					"agent", agent.Name,
+					"did", implicitDID,
+				)
+				mentions = []string{implicitDID}
+			}
 		}
 	}
 
 	rootURI, rootCID := threadRoot(record, uri, cid)
 
-	// ── No mentions → triage (requests only). ──────────────────────
-	// Only request-type signals go to triage. Result signals without
-	// mentions or parent a2a simply fall through to drop — they're
-	// answers, not requests for routing. Routing signals always have
-	// mentions. This means every signal on the firehose is processed
-	// uniformly; the routing rules just don't match results.
+	// Tagless requests (no mentions, no implicit continuation) are handled by
+	// the firehose-native triage agent out-of-band. It watches the firehose
+	// itself and publishes a routing signal. The bridge just drops the raw
+	// request here; the routing signal will come back around and trigger
+	// dispatch via the has-mentions path below.
 	if len(mentions) == 0 && signalType == "request" {
-		decision := b.callTriage(ctx, content)
-		if decision == nil {
-			return
-		}
-
-		if len(decision.Mentions) == 0 {
-			if b.orchestratorHandle != "" {
-				b.logger.Info("triage returned no mentions, falling back to orchestrator",
-					"signal_uri", uri,
-					"orchestrator", b.orchestratorHandle,
-					"rationale", decision.Rationale,
-				)
-				decision.Mentions = []string{b.orchestratorHandle}
-				decision.Rationale += " (bridge fallback: routed to orchestrator)"
-			} else {
-				b.logger.Info("triage returned no mentions, dropping signal",
-					"signal_uri", uri,
-					"rationale", decision.Rationale,
-				)
-				return
-			}
-		}
-
-		b.logger.Info("triage decision",
-			"mentions", decision.Mentions,
-			"rationale", decision.Rationale,
-		)
-
-		if b.accessToken != "" {
-			if err := b.publishRoutingSignal(ctx, b.triageHandle, uri, cid, rootURI, rootCID, decision.Mentions, decision.Rationale); err != nil {
-				b.logger.Error("failed to publish routing signal", "error", err)
-			}
-		}
-		return // Routing signal will trigger dispatch when it arrives on the firehose.
+		return
 	}
 
 	// ── Has mentions → dispatch to each agent. ─────────────────────
@@ -557,8 +526,11 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 	// root (the original user request) so agent responses appear alongside
 	// triage rather than nested under it. Triage is visible in the thread as
 	// a routing annotation but doesn't act as a parent for the actual work.
+	// Orchestrator routing signals (which carry an a2a back-ref) keep the
+	// routing signal itself as the parent so the result reply threads under
+	// the orchestrator's sub-dispatch.
 	dispatchParentURI, dispatchParentCID := uri, cid
-	if signalType == "routing" && did == b.sessionFor(b.triageHandle).DID {
+	if signalType == "routing" && ownA2AAgentDID == "" {
 		dispatchParentURI, dispatchParentCID = rootURI, rootCID
 	}
 
@@ -587,12 +559,25 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 			"context_id", contextID,
 		)
 
+		// Pull prior turns from the AppView (the canonical atproto indexer)
+		// so the dispatched agent can reconstruct conversational context
+		// without relying on its own in-process memory. Failures degrade
+		// silently to empty history — see fetchThreadHistory for details.
+		history := applyTruncation(
+			b.fetchThreadHistory(ctx, rootURI, uri),
+			65536, 8192,
+		)
+
 		tc := &threadContext{
-			SignalURI:  dispatchParentURI,
-			SignalCID:  dispatchParentCID,
-			RootURI:    rootURI,
-			RootCID:    rootCID,
-			PublishURL: b.publishBaseURL + "/publish",
+			SignalURI:     dispatchParentURI,
+			SignalCID:     dispatchParentCID,
+			SignalHttpURL: b.signalHttpURL(dispatchParentURI),
+			RootURI:       rootURI,
+			RootCID:       rootCID,
+			RootHttpURL:   b.signalHttpURL(rootURI),
+			PublishURL:    b.publishBaseURL + "/publish",
+			RecipientDID:  agent.DID,
+			History:       history,
 		}
 
 		result, err := sendA2ATask(ctx, agent.A2AEndpoint, content, contextID, tc)
@@ -654,47 +639,6 @@ func threadRoot(record map[string]any, signalURI, signalCID string) (string, str
 		}
 	}
 	return signalURI, signalCID
-}
-
-// triageDecision is the JSON shape we expect back from the triage agent.
-type triageDecision struct {
-	Mentions  []string `json:"mentions"`
-	Rationale string   `json:"rationale"`
-}
-
-// callTriage dispatches the signal content to the triage agent over A2A and
-// returns its parsed routing decision. Returns nil if triage is not registered
-// or the call fails — the caller should drop the signal in that case.
-func (b *Bridge) callTriage(ctx context.Context, content string) *triageDecision {
-	agent := b.registry.FindByHandle(b.triageHandle)
-	if agent == nil {
-		b.logger.Warn("no mentions and triage agent not registered, dropping signal",
-			"triage_handle", b.triageHandle,
-		)
-		return nil
-	}
-
-	b.logger.Info("calling triage", "endpoint", agent.A2AEndpoint)
-	result, err := sendA2ATask(ctx, agent.A2AEndpoint, content, "", nil)
-	if err != nil {
-		b.logger.Error("triage dispatch failed", "error", err)
-		return nil
-	}
-
-	var decision triageDecision
-	if err := json.Unmarshal([]byte(result.Text), &decision); err != nil {
-		b.logger.Warn("could not parse triage response as JSON",
-			"raw", result.Text,
-			"error", err,
-		)
-		return nil
-	}
-
-	b.logger.Info("triage decision",
-		"mentions", decision.Mentions,
-		"rationale", decision.Rationale,
-	)
-	return &decision
 }
 
 // a2aRef carries the A2A correlation IDs the bridge writes onto reply signals
@@ -773,6 +717,18 @@ func (b *Bridge) getRecord(ctx context.Context, uri string) (map[string]any, err
 		return nil, fmt.Errorf("decode getRecord response: %w", err)
 	}
 	return result.Value, nil
+}
+
+// authorDIDFromURI extracts the author DID component from an at:// URI.
+// Returns empty string for malformed URIs. The DID is the first path segment
+// after the at:// prefix and is authoritative without a record fetch — the
+// PDS guarantees that records under a given DID are owned by that DID.
+func authorDIDFromURI(atURI string) string {
+	parts := strings.SplitN(strings.TrimPrefix(atURI, "at://"), "/", 3)
+	if len(parts) < 1 || parts[0] == "" {
+		return ""
+	}
+	return parts[0]
 }
 
 // parentURIOf returns the immediate-parent URI from a signal record's reply
@@ -859,10 +815,6 @@ func (b *Bridge) handleAgentProfileDelete(did string) {
 	}
 }
 
-// --- PDS interaction: publish reply signals ---
-
-// publishRoutingSignal writes a `routing` signal in the thread carrying the
-// triage decision: which agents to dispatch to and a brief rationale. The
 // --- PDS record creation ---
 
 // createRecordResult is the URI + CID of a newly-created PDS record.
@@ -953,43 +905,6 @@ func buildReplyRef(parentURI, parentCID, rootURI, rootCID string) map[string]any
 }
 
 // --- Signal publishing ---
-
-// publishRoutingSignal writes a routing signal to the thread so the routing
-// decision is visible to anyone reading the thread later. The routing signal's
-// mentions field triggers dispatch when it returns on the firehose.
-func (b *Bridge) publishRoutingSignal(ctx context.Context, asHandle, parentURI, parentCID, rootURI, rootCID string, mentions []string, rationale string) error {
-	content := rationale
-	if content == "" {
-		content = "(no rationale)"
-	}
-
-	mentionsAny := make([]any, 0, len(mentions))
-	for _, m := range mentions {
-		mentionsAny = append(mentionsAny, m)
-	}
-
-	record := map[string]any{
-		"$type":     signalCollection,
-		"type":      "routing",
-		"content":   content,
-		"mentions":  mentionsAny,
-		"createdAt": time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		"reply":     buildReplyRef(parentURI, parentCID, rootURI, rootCID),
-	}
-
-	created, err := b.createSignalRecord(ctx, asHandle, record)
-	if err != nil {
-		return err
-	}
-
-	b.logger.Info("routing signal published",
-		"uri", created.URI,
-		"author_did", b.sessionFor(asHandle).DID,
-		"parent", parentURI,
-		"mentions", mentions,
-	)
-	return nil
-}
 
 // publishReplySignal writes a `result` signal under the bridge's repo as a
 // reply in an existing thread. parentURI/parentCID point at the signal we're

@@ -13,6 +13,7 @@
     <div id="sidebar-header">
       <h1>murmur</h1>
       <p>agent swarm appview</p>
+      <p id="me-indicator" class="me-indicator"></p>
     </div>
 
     <div id="post-form">
@@ -37,6 +38,10 @@
     <div id="main-header">
       <button id="back-btn" onclick="goBack()">&larr; Back</button>
       <h2 id="main-title">Live Threads</h2>
+      <div id="tab-bar">
+        <button class="tab-btn selected" data-tab="feed" onclick="selectTab('feed')">My feed</button>
+        <button class="tab-btn" data-tab="firehose" onclick="selectTab('firehose')">Firehose</button>
+      </div>
     </div>
     <div id="content">
       <div class="empty-state">

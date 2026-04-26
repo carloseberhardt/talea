@@ -4,10 +4,20 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 )
+
+// threadContextExtensionURI identifies the Murmur thread-context A2A extension.
+// URI is the version: breaking changes mint /v2, /v3, etc.
+// See /home/carlose/Downloads/thread-context-extension-design.md §3.1.
+const threadContextExtensionURI = "https://swarm.community/extensions/thread-context/v1"
+
+// threadContextDataKey is the namespaced key under which the thread-context
+// payload lives inside a DataPart.
+const threadContextDataKey = "community.swarm.threadContext"
 
 // a2aDispatchResult is what sendA2ATask returns: the response text plus the
 // task and context IDs the agent assigned (or echoed back). The bridge stores
@@ -20,43 +30,76 @@ type a2aDispatchResult struct {
 }
 
 // threadContext carries atproto signal threading info in A2A messages so that
-// agents can call POST /publish with correct thread references.
+// agents can call POST /publish with correct thread references and — when
+// History is populated — reconstruct prior conversation turns without relying
+// on in-process state. Shape matches the v1 extension schema.
 type threadContext struct {
-	SignalURI  string `json:"signalUri"`
-	SignalCID  string `json:"signalCid"`
-	RootURI    string `json:"rootUri"`
-	RootCID    string `json:"rootCid"`
-	PublishURL string `json:"publishUrl"`
+	SignalURI     string         `json:"signalUri"`
+	SignalCID     string         `json:"signalCid"`
+	SignalHttpURL string         `json:"signalHttpUrl,omitempty"`
+	RootURI       string         `json:"rootUri"`
+	RootCID       string         `json:"rootCid"`
+	RootHttpURL   string         `json:"rootHttpUrl,omitempty"`
+	PublishURL    string         `json:"publishUrl"`
+	RecipientDID  string         `json:"recipientDid,omitempty"`
+	History       []historyEntry `json:"history,omitempty"`
+}
+
+// extensionsRoundTripper adds the X-A2A-Extensions header to every outbound
+// request so extension-aware agents can detect extension activation at the
+// HTTP layer (per A2A extension spec).
+type extensionsRoundTripper struct {
+	base       http.RoundTripper
+	extensions []string
+}
+
+func (r *extensionsRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	for _, ext := range r.extensions {
+		req.Header.Add("X-A2A-Extensions", ext)
+	}
+	return r.base.RoundTrip(req)
 }
 
 // sendA2ATask sends a blocking SendMessage to an A2A agent. If contextID is
 // non-empty, it's set on the outgoing message so the agent can group related
 // tasks under the same context. If tc is non-nil, a DataPart with the thread
-// context is included alongside the text so the agent can call /publish.
+// context is included alongside the text so the agent can call /publish and
+// (when History is populated) reconstruct prior turns.
 func sendA2ATask(ctx context.Context, agentURL, content, contextID string, tc *threadContext) (*a2aDispatchResult, error) {
 	endpoints := []*a2a.AgentInterface{
 		a2a.NewAgentInterface(agentURL, a2a.TransportProtocolJSONRPC),
 	}
 
-	client, err := a2aclient.NewFromEndpoints(ctx, endpoints)
+	httpClient := &http.Client{
+		Transport: &extensionsRoundTripper{
+			base:       http.DefaultTransport,
+			extensions: []string{threadContextExtensionURI},
+		},
+	}
+
+	client, err := a2aclient.NewFromEndpoints(ctx, endpoints,
+		a2aclient.WithJSONRPCTransport(httpClient),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create A2A client: %w", err)
 	}
 
 	parts := []*a2a.Part{a2a.NewTextPart(content)}
 	if tc != nil {
+		payload := threadContextPayload(tc)
+		// Emit under both the new namespaced key (the v1 extension contract)
+		// and the legacy "threadContext" key so existing agents that haven't
+		// adopted the extension (currently: orchestrator) continue to find
+		// the publishUrl/signalUri/rootUri fields they rely on. Remove the
+		// legacy key once every consumer reads the namespaced version.
 		parts = append(parts, a2a.NewDataPart(map[string]any{
-			"threadContext": map[string]any{
-				"signalUri":  tc.SignalURI,
-				"signalCid":  tc.SignalCID,
-				"rootUri":    tc.RootURI,
-				"rootCid":    tc.RootCID,
-				"publishUrl": tc.PublishURL,
-			},
+			threadContextDataKey: payload,
+			"threadContext":      payload,
 		}))
 	}
 
 	msg := a2a.NewMessage(a2a.MessageRoleUser, parts...)
+	msg.Extensions = []string{threadContextExtensionURI}
 	if contextID != "" {
 		msg.ContextID = contextID
 	}
@@ -69,6 +112,32 @@ func sendA2ATask(ctx context.Context, agentURL, content, contextID string, tc *t
 	}
 
 	return extractDispatchResult(result)
+}
+
+// threadContextPayload builds the map embedded under threadContextDataKey.
+// Omits empty optional fields so consumers can cleanly distinguish
+// "not present" from "empty list" for History.
+func threadContextPayload(tc *threadContext) map[string]any {
+	payload := map[string]any{
+		"signalUri":  tc.SignalURI,
+		"signalCid":  tc.SignalCID,
+		"rootUri":    tc.RootURI,
+		"rootCid":    tc.RootCID,
+		"publishUrl": tc.PublishURL,
+	}
+	if tc.SignalHttpURL != "" {
+		payload["signalHttpUrl"] = tc.SignalHttpURL
+	}
+	if tc.RootHttpURL != "" {
+		payload["rootHttpUrl"] = tc.RootHttpURL
+	}
+	if tc.RecipientDID != "" {
+		payload["recipientDid"] = tc.RecipientDID
+	}
+	if tc.History != nil {
+		payload["history"] = tc.History
+	}
+	return payload
 }
 
 func extractDispatchResult(result a2a.SendMessageResult) (*a2aDispatchResult, error) {

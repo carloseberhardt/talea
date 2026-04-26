@@ -81,8 +81,26 @@ func (p *Poster) Authenticate(ctx context.Context) error {
 	return nil
 }
 
+// ReplyRef identifies the parent and root signals a reply is attached to.
+// Both URIs and CIDs are required by the community.swarm.signal lexicon.
+type ReplyRef struct {
+	ParentURI string
+	ParentCID string
+	RootURI   string
+	RootCID   string
+}
+
+// Me returns the authenticated handle and DID. Both are empty until
+// Authenticate succeeds.
+func (p *Poster) Me() (handle, did string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.handle, p.did
+}
+
 // Post creates a community.swarm.signal of type "request" and returns its AT-URI and CID.
-func (p *Poster) Post(ctx context.Context, content string, mentions []string) (string, string, error) {
+// If reply is non-nil, the signal is threaded as a reply to parent/root.
+func (p *Poster) Post(ctx context.Context, content string, mentions []string, reply *ReplyRef) (string, string, error) {
 	p.mu.Lock()
 	token := p.accessToken
 	did := p.did
@@ -100,6 +118,12 @@ func (p *Poster) Post(ctx context.Context, content string, mentions []string) (s
 	}
 	if len(mentions) > 0 {
 		record["mentions"] = mentions
+	}
+	if reply != nil {
+		record["reply"] = map[string]any{
+			"parent": map[string]string{"uri": reply.ParentURI, "cid": reply.ParentCID},
+			"root":   map[string]string{"uri": reply.RootURI, "cid": reply.RootCID},
+		}
 	}
 
 	payload := map[string]any{

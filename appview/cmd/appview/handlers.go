@@ -31,7 +31,10 @@ func registerHandlers(mux *http.ServeMux, state *State, hub *Hub, poster *Poster
 		handleAgentCard(w, r, discoveryURL, logger)
 	})
 	mux.HandleFunc("/api/post", func(w http.ResponseWriter, r *http.Request) {
-		handlePost(w, r, poster, logger)
+		handlePost(w, r, poster, state, logger)
+	})
+	mux.HandleFunc("/api/me", func(w http.ResponseWriter, r *http.Request) {
+		handleMe(w, r, poster)
 	})
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWS(hub, logger, w, r)
@@ -152,14 +155,15 @@ func handleAgentCard(w http.ResponseWriter, r *http.Request, discoveryURL string
 }
 
 // POST /api/post
-func handlePost(w http.ResponseWriter, r *http.Request, poster *Poster, logger *slog.Logger) {
+func handlePost(w http.ResponseWriter, r *http.Request, poster *Poster, state *State, logger *slog.Logger) {
 	if r.Method != http.MethodPost {
 		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var req struct {
-		Content  string   `json:"content"`
-		Mentions []string `json:"mentions"`
+		Content   string   `json:"content"`
+		Mentions  []string `json:"mentions"`
+		ParentURI string   `json:"parentUri"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, "invalid JSON body", http.StatusBadRequest)
@@ -170,7 +174,28 @@ func handlePost(w http.ResponseWriter, r *http.Request, poster *Poster, logger *
 		return
 	}
 
-	uri, cid, err := poster.Post(r.Context(), req.Content, req.Mentions)
+	var reply *ReplyRef
+	if req.ParentURI != "" {
+		parent := state.GetSignalByURI(req.ParentURI)
+		if parent == nil {
+			writeError(w, "parent signal not found in index", http.StatusBadRequest)
+			return
+		}
+		root := parent
+		if parent.RootURI != "" && parent.RootURI != parent.URI {
+			if r := state.GetSignalByURI(parent.RootURI); r != nil {
+				root = r
+			}
+		}
+		reply = &ReplyRef{
+			ParentURI: parent.URI,
+			ParentCID: parent.CID,
+			RootURI:   root.URI,
+			RootCID:   root.CID,
+		}
+	}
+
+	uri, cid, err := poster.Post(r.Context(), req.Content, req.Mentions, reply)
 	if err != nil {
 		logger.Warn("post failed", "error", err)
 		writeError(w, "failed to create signal: "+err.Error(), http.StatusInternalServerError)
@@ -178,4 +203,14 @@ func handlePost(w http.ResponseWriter, r *http.Request, poster *Poster, logger *
 	}
 
 	writeJSON(w, map[string]string{"uri": uri, "cid": cid})
+}
+
+// GET /api/me
+func handleMe(w http.ResponseWriter, r *http.Request, poster *Poster) {
+	if r.Method != http.MethodGet {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	handle, did := poster.Me()
+	writeJSON(w, map[string]string{"handle": handle, "did": did})
 }
