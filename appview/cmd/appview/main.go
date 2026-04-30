@@ -68,6 +68,11 @@ func main() {
 	// Start the firehose subscriber in the background.
 	go runFirehose(ctx, relayURL, pdsURL, state, logger)
 
+	// Walk every known repo's community.swarm.signal records once at startup
+	// to seed the in-memory index. Runs in parallel with the firehose; State
+	// dedupes by URI.
+	go runBackfill(ctx, pdsURL, discoveryURL, murmurHandle, state, logger)
+
 	// Shut down HTTP server when context is cancelled.
 	go func() {
 		<-ctx.Done()

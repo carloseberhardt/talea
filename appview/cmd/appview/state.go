@@ -74,22 +74,44 @@ func NewState(hub *Hub) *State {
 	}
 }
 
-// AddSignal indexes a new signal and broadcasts it to connected WebSocket clients.
+// AddSignal indexes a new signal and broadcasts it to connected WebSocket
+// clients. Duplicates (same URI) are silently ignored — this lets the firehose
+// and PDS backfill safely overlap.
 func (s *State) AddSignal(sig *Signal) {
+	if s.indexSignal(sig) {
+		s.hub.BroadcastSignal(sig)
+	}
+}
+
+// AddSignalSilent indexes a signal without broadcasting it. Used by the
+// startup backfill so reconstructed history doesn't appear as live activity
+// to connected web clients.
+func (s *State) AddSignalSilent(sig *Signal) {
+	s.indexSignal(sig)
+}
+
+// indexSignal performs the locked indexing work. Returns true if the signal
+// was newly added, false if it was a duplicate (same URI already indexed in
+// the same thread).
+func (s *State) indexSignal(sig *Signal) bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	thread, exists := s.threads[sig.RootURI]
 	if !exists {
 		thread = &Thread{RootURI: sig.RootURI}
 		s.threads[sig.RootURI] = thread
 	}
+	for _, existing := range thread.Signals {
+		if existing.URI == sig.URI {
+			return false
+		}
+	}
 	thread.Signals = append(thread.Signals, sig)
 	thread.UpdatedAt = sig.IndexedAt
 
-	// Compute depth while holding the lock (thread.Signals is complete up to now).
 	sig.Depth = computeDepth(sig, thread)
 
-	// byAuthor index
 	if sig.AuthorHandle != "" {
 		existing := s.byAuthor[sig.AuthorHandle]
 		existing = append(existing, sig)
@@ -99,13 +121,8 @@ func (s *State) AddSignal(sig *Signal) {
 		s.byAuthor[sig.AuthorHandle] = existing
 	}
 
-	// Update recentRoots ring buffer: move to front if already present, else prepend.
 	s.upsertRecentRoot(sig.RootURI)
-
-	s.mu.Unlock()
-
-	// Broadcast outside the lock.
-	s.hub.BroadcastSignal(sig)
+	return true
 }
 
 // upsertRecentRoot moves rootURI to the front of recentRoots, or prepends it.
