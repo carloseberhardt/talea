@@ -13,16 +13,19 @@ import (
 )
 
 // Poster manages PDS authentication and record creation on behalf of the human
-// user (MURMUR_HANDLE).
+// user (MURMUR_HANDLE). Sessions auto-refresh on expiry: a stale token
+// triggers a refreshSession call, falling back to a full createSession with
+// the original credentials if the refresh token is also expired.
 type Poster struct {
-	pdsURL    string
-	handle    string
-	password  string
-	logger    *slog.Logger
+	pdsURL   string
+	handle   string
+	password string
+	logger   *slog.Logger
 
-	mu          sync.Mutex
-	accessToken string
-	did         string
+	mu           sync.Mutex
+	accessToken  string
+	refreshToken string
+	did          string
 }
 
 // NewPoster creates a Poster but does not authenticate yet. Call Authenticate
@@ -36,8 +39,17 @@ func NewPoster(pdsURL, handle, password string, logger *slog.Logger) *Poster {
 	}
 }
 
-// Authenticate logs in to the PDS and caches the access token and DID.
+// Authenticate logs in to the PDS and caches the access + refresh tokens
+// and DID.
 func (p *Poster) Authenticate(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.createSessionLocked(ctx)
+}
+
+// createSessionLocked performs a full createSession against stored credentials.
+// Caller must hold p.mu.
+func (p *Poster) createSessionLocked(ctx context.Context) error {
 	body, _ := json.Marshal(map[string]string{
 		"identifier": p.handle,
 		"password":   p.password,
@@ -62,8 +74,9 @@ func (p *Poster) Authenticate(ctx context.Context) error {
 	}
 
 	var result struct {
-		AccessJwt string `json:"accessJwt"`
-		DID       string `json:"did"`
+		AccessJwt  string `json:"accessJwt"`
+		RefreshJwt string `json:"refreshJwt"`
+		DID        string `json:"did"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return fmt.Errorf("parse auth response: %w", err)
@@ -72,13 +85,108 @@ func (p *Poster) Authenticate(ctx context.Context) error {
 		return fmt.Errorf("auth response missing accessJwt or did")
 	}
 
-	p.mu.Lock()
+	wasReauth := p.accessToken != ""
 	p.accessToken = result.AccessJwt
+	p.refreshToken = result.RefreshJwt
 	p.did = result.DID
-	p.mu.Unlock()
 
-	p.logger.Info("authenticated as human user", "handle", p.handle, "did", result.DID)
+	if wasReauth {
+		p.logger.Info("re-authenticated as human user", "handle", p.handle, "did", result.DID)
+	} else {
+		p.logger.Info("authenticated as human user", "handle", p.handle, "did", result.DID)
+	}
 	return nil
+}
+
+// refreshSessionLocked calls com.atproto.server.refreshSession to swap a stale
+// access token for a fresh one. Caller must hold p.mu.
+func (p *Poster) refreshSessionLocked(ctx context.Context) error {
+	if p.refreshToken == "" {
+		return fmt.Errorf("no refresh token")
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		p.pdsURL+"/xrpc/com.atproto.server.refreshSession", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+p.refreshToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("refresh request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("refresh failed (%d): %s", resp.StatusCode, string(raw))
+	}
+
+	var result struct {
+		AccessJwt  string `json:"accessJwt"`
+		RefreshJwt string `json:"refreshJwt"`
+		DID        string `json:"did"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return fmt.Errorf("parse refresh response: %w", err)
+	}
+	if result.AccessJwt == "" {
+		return fmt.Errorf("refresh response missing accessJwt")
+	}
+
+	p.accessToken = result.AccessJwt
+	if result.RefreshJwt != "" {
+		p.refreshToken = result.RefreshJwt
+	}
+	if result.DID != "" {
+		p.did = result.DID
+	}
+	p.logger.Info("session refreshed", "handle", p.handle)
+	return nil
+}
+
+// refreshOrReauth replaces a stale access token. If staleToken doesn't match
+// the current cached token, another goroutine already refreshed and we return
+// without doing anything. Otherwise we try refreshSession; if that fails we
+// fall back to a full createSession with stored credentials.
+func (p *Poster) refreshOrReauth(ctx context.Context, staleToken string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.accessToken != staleToken {
+		return nil // already refreshed by another caller
+	}
+
+	if err := p.refreshSessionLocked(ctx); err == nil {
+		return nil
+	} else {
+		p.logger.Warn("refreshSession failed, re-authenticating", "error", err)
+	}
+
+	return p.createSessionLocked(ctx)
+}
+
+// isExpiredTokenError detects PDS responses that mean "your access token is
+// no longer valid." PDS uses HTTP 401 in some cases and HTTP 400 with body
+// `{"error":"ExpiredToken"}` in others, so both must be checked.
+func isExpiredTokenError(statusCode int, body []byte) bool {
+	if statusCode == http.StatusUnauthorized {
+		return true
+	}
+	if statusCode != http.StatusBadRequest {
+		return false
+	}
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		return false
+	}
+	switch errResp.Error {
+	case "ExpiredToken", "InvalidToken", "AuthRequired":
+		return true
+	}
+	return false
 }
 
 // ReplyRef identifies the parent and root signals a reply is attached to.
@@ -98,18 +206,10 @@ func (p *Poster) Me() (handle, did string) {
 	return p.handle, p.did
 }
 
-// Post creates a community.swarm.signal of type "request" and returns its AT-URI and CID.
-// If reply is non-nil, the signal is threaded as a reply to parent/root.
+// Post creates a community.swarm.signal of type "request" and returns its
+// AT-URI and CID. If reply is non-nil, the signal is threaded as a reply to
+// parent/root. Retries once on token expiry after refreshing the session.
 func (p *Poster) Post(ctx context.Context, content string, mentions []string, reply *ReplyRef) (string, string, error) {
-	p.mu.Lock()
-	token := p.accessToken
-	did := p.did
-	p.mu.Unlock()
-
-	if token == "" {
-		return "", "", fmt.Errorf("not authenticated — call Authenticate first")
-	}
-
 	record := map[string]any{
 		"$type":     "community.swarm.signal",
 		"type":      "request",
@@ -126,45 +226,66 @@ func (p *Poster) Post(ctx context.Context, content string, mentions []string, re
 		}
 	}
 
-	payload := map[string]any{
-		"repo":       did,
-		"collection": "community.swarm.signal",
-		"validate":   false,
-		"record":     record,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", "", fmt.Errorf("marshal record: %w", err)
-	}
+	for attempt := range 2 {
+		p.mu.Lock()
+		token := p.accessToken
+		did := p.did
+		p.mu.Unlock()
 
-	req, err := http.NewRequestWithContext(ctx, "POST",
-		p.pdsURL+"/xrpc/com.atproto.repo.createRecord",
-		bytes.NewReader(body))
-	if err != nil {
-		return "", "", fmt.Errorf("build create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
+		if token == "" {
+			return "", "", fmt.Errorf("not authenticated — call Authenticate first")
+		}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("create record request: %w", err)
-	}
-	defer resp.Body.Close()
+		payload := map[string]any{
+			"repo":       did,
+			"collection": "community.swarm.signal",
+			"validate":   false,
+			"record":     record,
+		}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return "", "", fmt.Errorf("marshal record: %w", err)
+		}
 
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("create record failed (%d): %s", resp.StatusCode, string(raw))
-	}
+		req, err := http.NewRequestWithContext(ctx, "POST",
+			p.pdsURL+"/xrpc/com.atproto.repo.createRecord",
+			bytes.NewReader(body))
+		if err != nil {
+			return "", "", fmt.Errorf("build create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
 
-	var result struct {
-		URI string `json:"uri"`
-		CID string `json:"cid"`
-	}
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return "", "", fmt.Errorf("parse create response: %w", err)
-	}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return "", "", fmt.Errorf("create record request: %w", err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
 
-	p.logger.Info("posted signal", "uri", result.URI, "handle", p.handle)
-	return result.URI, result.CID, nil
+		if isExpiredTokenError(resp.StatusCode, raw) && attempt == 0 {
+			p.logger.Warn("PDS rejected token, refreshing session",
+				"status", resp.StatusCode, "handle", p.handle)
+			if err := p.refreshOrReauth(ctx, token); err != nil {
+				return "", "", fmt.Errorf("PDS auth expired and refresh failed: %w", err)
+			}
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return "", "", fmt.Errorf("create record failed (%d): %s", resp.StatusCode, string(raw))
+		}
+
+		var result struct {
+			URI string `json:"uri"`
+			CID string `json:"cid"`
+		}
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return "", "", fmt.Errorf("parse create response: %w", err)
+		}
+
+		p.logger.Info("posted signal", "uri", result.URI, "handle", p.handle)
+		return result.URI, result.CID, nil
+	}
+	return "", "", fmt.Errorf("Post: exhausted retry attempts after refresh")
 }
