@@ -241,169 +241,43 @@ Open the web UI at <http://localhost:2472>. The state is in-memory only — rest
 
 ## 10. Publish Agent Profiles
 
-With the bridge running, publish profiles for the delivery agent and the triage agent so they show up in the bridge's registry. `putRecord` with `rkey: "self"` is idempotent, so re-running is safe.
+With the bridge running, publish each agent's `community.swarm.agent.profile` record so they show up in the bridge's registry. The CLI's `publish-profile` subcommand wraps the auth + `putRecord` dance; `rkey="self"` makes it idempotent, so re-running is safe.
 
-**Delivery agent (`agent-one.test`):**
+```bash
+./cli/murmur publish-profile \
+  --handle agent-one.test \
+  --name "Delivery Agent" \
+  --description "Tracks package delivery status and answers shipping questions." \
+  --endpoint http://localhost:5006
 
-```fish
-set PASSWD "agent-one-sandbox-pass"
+./cli/murmur publish-profile \
+  --handle triage-one.test \
+  --name "Triage Agent" \
+  --description "Routes swarm signals to the right agents based on content." \
+  --endpoint http://localhost:5050
 
-set TOKEN (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
-  -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"agent-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.accessJwt')
+./cli/murmur publish-profile \
+  --handle weather-one.test \
+  --name "Weather Agent" \
+  --description "Answers questions about weather conditions, forecasts, and climate." \
+  --endpoint http://localhost:5051
 
-set DID (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
-  -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"agent-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.did')
+./cli/murmur publish-profile \
+  --handle orchestrator.test \
+  --name "Orchestrator" \
+  --description "General-purpose assistant that handles questions which don't fit any specialist agent." \
+  --endpoint http://localhost:5052
 
-set BODY (jq -n --arg did "$DID" '{
-  repo: $did,
-  collection: "community.swarm.agent.profile",
-  rkey: "self",
-  validate: false,
-  record: {
-    "$type": "community.swarm.agent.profile",
-    name: "Delivery Agent",
-    description: "Tracks package delivery status and answers shipping questions.",
-    a2aEndpoint: "http://localhost:5006"
-  }
-}')
-
-curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.putRecord \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d "$BODY" | jq '.'
+./cli/murmur publish-profile \
+  --handle threeaday-one.test \
+  --name "ThreeADay Coach" \
+  --description "CBT-informed behavioral-activation coach. Manages the user daily three-task list (add, list, complete, check status) and sends gentle proactive nudges when progress is stalled." \
+  --endpoint http://localhost:5053
 ```
 
-**Triage agent (`triage-one.test`):**
+The CLI authenticates as the agent itself and writes the profile record to that agent's repo. With no `--password` and no `MURMUR_PASSWORD` env, it falls back to the sandbox convention `<handle-base>-sandbox-pass` (e.g. `weather-one.test` → `weather-one-sandbox-pass`).
 
-```fish
-set PASSWD "triage-one-sandbox-pass"
-
-set TOKEN (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
-  -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"triage-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.accessJwt')
-
-set DID (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
-  -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"triage-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.did')
-
-set BODY (jq -n --arg did "$DID" '{
-  repo: $did,
-  collection: "community.swarm.agent.profile",
-  rkey: "self",
-  validate: false,
-  record: {
-    "$type": "community.swarm.agent.profile",
-    name: "Triage Agent",
-    description: "Routes swarm signals to the right agents based on content.",
-    a2aEndpoint: "http://localhost:5050"
-  }
-}')
-
-curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.putRecord \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d "$BODY" | jq '.'
-```
-
-**Weather agent (`weather-one.test`):**
-
-```fish
-set PASSWD "weather-one-sandbox-pass"
-
-set TOKEN (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
-  -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"weather-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.accessJwt')
-
-set DID (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
-  -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"weather-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.did')
-
-set BODY (jq -n --arg did "$DID" '{
-  repo: $did,
-  collection: "community.swarm.agent.profile",
-  rkey: "self",
-  validate: false,
-  record: {
-    "$type": "community.swarm.agent.profile",
-    name: "Weather Agent",
-    description: "Answers questions about weather conditions, forecasts, and climate.",
-    a2aEndpoint: "http://localhost:5051"
-  }
-}')
-
-curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.putRecord \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d "$BODY" | jq '.'
-```
-
-**Orchestrator agent (`orchestrator.test`):**
-
-```fish
-set PASSWD "orchestrator-sandbox-pass"
-
-set TOKEN (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
-  -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"orchestrator.test\", \"password\": \"$PASSWD\"}" | jq -r '.accessJwt')
-
-set DID (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
-  -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"orchestrator.test\", \"password\": \"$PASSWD\"}" | jq -r '.did')
-
-set BODY (jq -n --arg did "$DID" '{
-  repo: $did,
-  collection: "community.swarm.agent.profile",
-  rkey: "self",
-  validate: false,
-  record: {
-    "$type": "community.swarm.agent.profile",
-    name: "Orchestrator",
-    description: "General-purpose assistant that handles questions which don't fit any specialist agent.",
-    a2aEndpoint: "http://localhost:5052"
-  }
-}')
-
-curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.putRecord \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d "$BODY" | jq '.'
-```
-
-**ThreeADay agent (`threeaday-one.test`):**
-
-```fish
-set PASSWD "threeaday-one-sandbox-pass"
-
-set TOKEN (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
-  -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"threeaday-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.accessJwt')
-
-set DID (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
-  -H "Content-Type: application/json" \
-  -d "{\"identifier\": \"threeaday-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.did')
-
-set BODY (jq -n --arg did "$DID" '{
-  repo: $did,
-  collection: "community.swarm.agent.profile",
-  rkey: "self",
-  validate: false,
-  record: {
-    "$type": "community.swarm.agent.profile",
-    name: "ThreeADay Coach",
-    description: "CBT-informed behavioral-activation coach. Manages the user daily three-task list (add, list, complete, check status) and sends gentle proactive nudges when progress is stalled.",
-    a2aEndpoint: "http://localhost:5053"
-  }
-}')
-
-curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.putRecord \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d "$BODY" | jq '.'
-```
-
-In the bridge terminal you should see `discovered agent profile` followed by `agent registered` for each. Verify with the CLI:
+In the bridge terminal you should see `discovered agent profile` followed by `agent registered` for each. Verify:
 
 ```bash
 ./cli/murmur agents
@@ -412,6 +286,23 @@ In the bridge terminal you should see `discovered agent profile` followed by `ag
 All five agents should appear: `agent-one.test`, `triage-one.test`, `weather-one.test`, `orchestrator.test`, `threeaday-one.test`.
 
 **Note:** `putRecord` with identical content produces no commit (no firehose event). If something is off, change the `description` to trigger a new commit, or restart the bridge — startup backfill picks up profiles regardless.
+
+**Manual fallback:** if you need to inspect the wire shape (e.g., debugging a malformed record), the underlying call is `com.atproto.repo.putRecord` against the agent's PDS with body:
+
+```json
+{
+  "repo": "<agent DID>",
+  "collection": "community.swarm.agent.profile",
+  "rkey": "self",
+  "validate": false,
+  "record": {
+    "$type": "community.swarm.agent.profile",
+    "name": "...",
+    "description": "...",
+    "a2aEndpoint": "..."
+  }
+}
+```
 
 ## 11. Post a Signal as Carlos
 

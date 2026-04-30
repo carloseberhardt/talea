@@ -708,6 +708,136 @@ func cmdAgents(args []string) int {
 	return 0
 }
 
+// ─── Subcommand: publish-profile ──────────────────────────────
+
+// cmdPublishProfile writes (or rewrites) a community.swarm.agent.profile record
+// at rkey="self" in the agent's repo, replacing the manual fish/curl ritual
+// previously documented in the runbook for every new agent.
+func cmdPublishProfile(args []string) int {
+	var handle, name, description, endpoint, password string
+
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case (a == "--handle" || a == "-h") && i+1 < len(args):
+			handle = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--handle="):
+			handle = strings.TrimPrefix(a, "--handle=")
+			i++
+		case a == "--name" && i+1 < len(args):
+			name = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--name="):
+			name = strings.TrimPrefix(a, "--name=")
+			i++
+		case (a == "--description" || a == "--desc") && i+1 < len(args):
+			description = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--description="):
+			description = strings.TrimPrefix(a, "--description=")
+			i++
+		case strings.HasPrefix(a, "--desc="):
+			description = strings.TrimPrefix(a, "--desc=")
+			i++
+		case (a == "--endpoint" || a == "--a2a-endpoint") && i+1 < len(args):
+			endpoint = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--endpoint="):
+			endpoint = strings.TrimPrefix(a, "--endpoint=")
+			i++
+		case strings.HasPrefix(a, "--a2a-endpoint="):
+			endpoint = strings.TrimPrefix(a, "--a2a-endpoint=")
+			i++
+		case a == "--password" && i+1 < len(args):
+			password = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--password="):
+			password = strings.TrimPrefix(a, "--password=")
+			i++
+		default:
+			fmt.Fprintf(os.Stderr, "unknown argument: %s\n\n", a)
+			fmt.Fprintln(os.Stderr, publishProfileUsage)
+			return 1
+		}
+	}
+
+	if handle == "" {
+		handle = os.Getenv("MURMUR_HANDLE")
+	}
+	if handle == "" || name == "" || description == "" || endpoint == "" {
+		fmt.Fprintln(os.Stderr, publishProfileUsage)
+		return 1
+	}
+
+	if password == "" {
+		password = os.Getenv("MURMUR_PASSWORD")
+	}
+	if password == "" {
+		password = sandboxPassword(handle)
+		fmt.Fprintf(os.Stderr, "note: no --password or MURMUR_PASSWORD; trying sandbox convention %q\n", password)
+	}
+
+	cfg := config{
+		PDSURL:   envOr("MURMUR_PDS_URL", "https://pds.murmur.internal"),
+		Handle:   handle,
+		Password: password,
+	}
+	sess, err := authenticate(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "auth failed for %s: %v\n", handle, err)
+		return 1
+	}
+
+	record := map[string]any{
+		"$type":       profileCollection,
+		"name":        name,
+		"description": description,
+		"a2aEndpoint": endpoint,
+	}
+	body := map[string]any{
+		"repo":       sess.DID,
+		"collection": profileCollection,
+		"rkey":       "self",
+		"validate":   false,
+		"record":     record,
+	}
+
+	respBody, err := pdsPostAuthed(cfg, sess, "/xrpc/com.atproto.repo.putRecord", body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "putRecord failed: %v\n", err)
+		return 1
+	}
+
+	var out struct {
+		URI string `json:"uri"`
+		CID string `json:"cid"`
+	}
+	json.Unmarshal(respBody, &out)
+
+	fmt.Printf("published %s\n", out.URI)
+	fmt.Printf("  did:        %s\n", sess.DID)
+	fmt.Printf("  name:       %s\n", name)
+	fmt.Printf("  endpoint:   %s\n", endpoint)
+	return 0
+}
+
+// sandboxPassword derives the sandbox-convention password from a handle.
+// Example: weather-one.test → weather-one-sandbox-pass.
+func sandboxPassword(handle string) string {
+	base := strings.TrimSuffix(handle, ".test")
+	return base + "-sandbox-pass"
+}
+
+const publishProfileUsage = `usage: murmur publish-profile --handle <handle> --name "<name>" --description "<text>" --endpoint <url> [--password <pwd>]
+
+  --handle      Agent handle (or MURMUR_HANDLE env). The profile is written to this account's repo.
+  --name        Display name for the agent.
+  --description One-line description of what the agent does.
+  --endpoint    A2A endpoint URL (also accepts --a2a-endpoint).
+  --password    PDS password (or MURMUR_PASSWORD env). Falls back to sandbox convention "<handle-base>-sandbox-pass".`
+
 // ─── Subcommand: whoami ───────────────────────────────────────
 
 func cmdWhoami(args []string) int {
@@ -744,6 +874,11 @@ commands:
   agents
       List registered agent profiles on the PDS.
 
+  publish-profile --handle <handle> --name "<name>" --description "<text>" --endpoint <url>
+      Publish (or rewrite) an agent's community.swarm.agent.profile record at
+      rkey="self". Authenticates as the agent itself; password derives from
+      the sandbox convention if --password and MURMUR_PASSWORD are unset.
+
   whoami
       Show the configured identity and PDS URL.
 
@@ -771,6 +906,8 @@ func main() {
 		os.Exit(cmdThread(args))
 	case "agents":
 		os.Exit(cmdAgents(args))
+	case "publish-profile":
+		os.Exit(cmdPublishProfile(args))
 	case "whoami":
 		os.Exit(cmdWhoami(args))
 	case "help", "-h", "--help":
