@@ -1,0 +1,32 @@
+[
+  {
+    "handle": "agent-one.test",
+    "name": "Delivery Agent",
+    "description": "Tracks package delivery status and answers shipping questions.",
+    "endpoint": "http://localhost:5006"
+  },
+  {
+    "handle": "triage-one.test",
+    "name": "Triage Agent",
+    "description": "Routes swarm signals to the right agents based on content.",
+    "endpoint": "http://localhost:5050"
+  },
+  {
+    "handle": "weather-one.test",
+    "name": "Weather Agent",
+    "description": "Answers questions about weather conditions, forecasts, and climate.",
+    "endpoint": "http://localhost:5051"
+  },
+  {
+    "handle": "orchestrator.test",
+    "name": "Orchestrator",
+    "description": "General-purpose assistant that handles questions which don't fit any specialist agent.",
+    "endpoint": "http://localhost:5052"
+  },
+  {
+    "handle": "threeaday-one.test",
+    "name": "ThreeADay Coach",
+    "description": "CBT-informed behavioral-activation coach. Manages the user daily three-task list (add, list, complete, check status) and sends gentle proactive nudges when progress is stalled.",
+    "endpoint": "http://localhost:5053"
+  }
+]

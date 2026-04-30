@@ -241,41 +241,33 @@ Open the web UI at <http://localhost:2472>. The state is in-memory only — rest
 
 ## 10. Publish Agent Profiles
 
-With the bridge running, publish each agent's `community.swarm.agent.profile` record so they show up in the bridge's registry. The CLI's `publish-profile` subcommand wraps the auth + `putRecord` dance; `rkey="self"` makes it idempotent, so re-running is safe.
+With the bridge running, publish each agent's `community.swarm.agent.profile` record so they show up in the bridge's registry. The fastest path is the checked-in manifest:
 
 ```bash
-./cli/murmur publish-profile \
-  --handle agent-one.test \
-  --name "Delivery Agent" \
-  --description "Tracks package delivery status and answers shipping questions." \
-  --endpoint http://localhost:5006
+./cli/murmur publish-profile --file scripts/profiles.json
+```
 
-./cli/murmur publish-profile \
-  --handle triage-one.test \
-  --name "Triage Agent" \
-  --description "Routes swarm signals to the right agents based on content." \
-  --endpoint http://localhost:5050
+Expected output:
 
+```
+✓ agent-one.test         at://did:plc:.../community.swarm.agent.profile/self
+✓ triage-one.test        at://did:plc:.../community.swarm.agent.profile/self
+✓ weather-one.test       at://did:plc:.../community.swarm.agent.profile/self
+✓ orchestrator.test      at://did:plc:.../community.swarm.agent.profile/self
+✓ threeaday-one.test     at://did:plc:.../community.swarm.agent.profile/self
+```
+
+The manifest schema is one JSON object per agent with `handle`, `name`, `description`, `endpoint`, and an optional `password`. Either a single object or an array works. With no password set in the manifest or `MURMUR_PASSWORD` env, the CLI derives the sandbox password from the handle (`weather-one.test` → `weather-one-sandbox-pass`). `rkey="self"` makes the write idempotent, so re-running is safe.
+
+For a single agent without a manifest:
+
+```bash
 ./cli/murmur publish-profile \
   --handle weather-one.test \
   --name "Weather Agent" \
   --description "Answers questions about weather conditions, forecasts, and climate." \
   --endpoint http://localhost:5051
-
-./cli/murmur publish-profile \
-  --handle orchestrator.test \
-  --name "Orchestrator" \
-  --description "General-purpose assistant that handles questions which don't fit any specialist agent." \
-  --endpoint http://localhost:5052
-
-./cli/murmur publish-profile \
-  --handle threeaday-one.test \
-  --name "ThreeADay Coach" \
-  --description "CBT-informed behavioral-activation coach. Manages the user daily three-task list (add, list, complete, check status) and sends gentle proactive nudges when progress is stalled." \
-  --endpoint http://localhost:5053
 ```
-
-The CLI authenticates as the agent itself and writes the profile record to that agent's repo. With no `--password` and no `MURMUR_PASSWORD` env, it falls back to the sandbox convention `<handle-base>-sandbox-pass` (e.g. `weather-one.test` → `weather-one-sandbox-pass`).
 
 In the bridge terminal you should see `discovered agent profile` followed by `agent registered` for each. Verify:
 

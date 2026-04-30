@@ -710,11 +710,25 @@ func cmdAgents(args []string) int {
 
 // ─── Subcommand: publish-profile ──────────────────────────────
 
-// cmdPublishProfile writes (or rewrites) a community.swarm.agent.profile record
-// at rkey="self" in the agent's repo, replacing the manual fish/curl ritual
-// previously documented in the runbook for every new agent.
+// profileEntry is the JSON shape for a single profile manifest entry.
+// Password is optional — falls back to MURMUR_PASSWORD env or sandbox
+// convention when empty. The Endpoint/A2AEndpoint pair lets the manifest
+// use either key name.
+type profileEntry struct {
+	Handle      string `json:"handle"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Endpoint    string `json:"endpoint"`
+	A2AEndpoint string `json:"a2aEndpoint"`
+	Password    string `json:"password,omitempty"`
+}
+
+// cmdPublishProfile writes (or rewrites) one or more
+// community.swarm.agent.profile records at rkey="self" in their respective
+// agent repos. Either a single profile passed via --handle / --name / etc.,
+// or a JSON manifest passed via --file (single object or array).
 func cmdPublishProfile(args []string) int {
-	var handle, name, description, endpoint, password string
+	var handle, name, description, endpoint, password, file string
 
 	i := 0
 	for i < len(args) {
@@ -756,6 +770,12 @@ func cmdPublishProfile(args []string) int {
 		case strings.HasPrefix(a, "--password="):
 			password = strings.TrimPrefix(a, "--password=")
 			i++
+		case (a == "--file" || a == "-f") && i+1 < len(args):
+			file = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--file="):
+			file = strings.TrimPrefix(a, "--file=")
+			i++
 		default:
 			fmt.Fprintf(os.Stderr, "unknown argument: %s\n\n", a)
 			fmt.Fprintln(os.Stderr, publishProfileUsage)
@@ -763,31 +783,104 @@ func cmdPublishProfile(args []string) int {
 		}
 	}
 
-	if handle == "" {
-		handle = os.Getenv("MURMUR_HANDLE")
+	var entries []profileEntry
+
+	if file != "" {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read %s: %v\n", file, err)
+			return 1
+		}
+		entries, err = parseProfileFile(raw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "parse %s: %v\n", file, err)
+			return 1
+		}
+		if len(entries) == 0 {
+			fmt.Fprintf(os.Stderr, "%s: no profiles found\n", file)
+			return 1
+		}
+	} else {
+		if handle == "" {
+			handle = os.Getenv("MURMUR_HANDLE")
+		}
+		if handle == "" || name == "" || description == "" || endpoint == "" {
+			fmt.Fprintln(os.Stderr, publishProfileUsage)
+			return 1
+		}
+		entries = []profileEntry{{
+			Handle:      handle,
+			Name:        name,
+			Description: description,
+			Endpoint:    endpoint,
+			Password:    password,
+		}}
 	}
-	if handle == "" || name == "" || description == "" || endpoint == "" {
-		fmt.Fprintln(os.Stderr, publishProfileUsage)
+
+	pdsURL := envOr("MURMUR_PDS_URL", "https://pds.murmur.internal")
+	failures := 0
+
+	for _, e := range entries {
+		// Allow either "endpoint" or "a2aEndpoint" key in the manifest;
+		// flag path always populates Endpoint.
+		ep := e.Endpoint
+		if ep == "" {
+			ep = e.A2AEndpoint
+		}
+		if e.Handle == "" || e.Name == "" || e.Description == "" || ep == "" {
+			fmt.Fprintf(os.Stderr, "skip incomplete entry: handle=%q name=%q endpoint=%q\n",
+				e.Handle, e.Name, ep)
+			failures++
+			continue
+		}
+
+		pwd := e.Password
+		if pwd == "" {
+			pwd = os.Getenv("MURMUR_PASSWORD")
+		}
+		if pwd == "" {
+			pwd = sandboxPassword(e.Handle)
+		}
+
+		if err := publishOneProfile(pdsURL, e.Handle, pwd, e.Name, e.Description, ep); err != nil {
+			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", e.Handle, err)
+			failures++
+		}
+	}
+
+	if failures > 0 {
+		fmt.Fprintf(os.Stderr, "\n%d of %d profiles failed\n", failures, len(entries))
 		return 1
 	}
+	return 0
+}
 
-	if password == "" {
-		password = os.Getenv("MURMUR_PASSWORD")
+// parseProfileFile accepts either a single JSON object or an array of objects.
+func parseProfileFile(raw []byte) ([]profileEntry, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("empty file")
 	}
-	if password == "" {
-		password = sandboxPassword(handle)
-		fmt.Fprintf(os.Stderr, "note: no --password or MURMUR_PASSWORD; trying sandbox convention %q\n", password)
+	if trimmed[0] == '[' {
+		var arr []profileEntry
+		if err := json.Unmarshal(raw, &arr); err != nil {
+			return nil, err
+		}
+		return arr, nil
 	}
+	var single profileEntry
+	if err := json.Unmarshal(raw, &single); err != nil {
+		return nil, err
+	}
+	return []profileEntry{single}, nil
+}
 
-	cfg := config{
-		PDSURL:   envOr("MURMUR_PDS_URL", "https://pds.murmur.internal"),
-		Handle:   handle,
-		Password: password,
-	}
+// publishOneProfile authenticates as the agent and writes its profile record.
+func publishOneProfile(pdsURL, handle, password, name, description, endpoint string) error {
+	cfg := config{PDSURL: pdsURL, Handle: handle, Password: password}
 	sess, err := authenticate(cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "auth failed for %s: %v\n", handle, err)
-		return 1
+		return fmt.Errorf("auth: %w", err)
 	}
 
 	record := map[string]any{
@@ -806,8 +899,7 @@ func cmdPublishProfile(args []string) int {
 
 	respBody, err := pdsPostAuthed(cfg, sess, "/xrpc/com.atproto.repo.putRecord", body)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "putRecord failed: %v\n", err)
-		return 1
+		return fmt.Errorf("putRecord: %w", err)
 	}
 
 	var out struct {
@@ -816,11 +908,8 @@ func cmdPublishProfile(args []string) int {
 	}
 	json.Unmarshal(respBody, &out)
 
-	fmt.Printf("published %s\n", out.URI)
-	fmt.Printf("  did:        %s\n", sess.DID)
-	fmt.Printf("  name:       %s\n", name)
-	fmt.Printf("  endpoint:   %s\n", endpoint)
-	return 0
+	fmt.Printf("✓ %-22s %s\n", handle, out.URI)
+	return nil
 }
 
 // sandboxPassword derives the sandbox-convention password from a handle.
@@ -830,13 +919,20 @@ func sandboxPassword(handle string) string {
 	return base + "-sandbox-pass"
 }
 
-const publishProfileUsage = `usage: murmur publish-profile --handle <handle> --name "<name>" --description "<text>" --endpoint <url> [--password <pwd>]
+const publishProfileUsage = `usage:
+  murmur publish-profile --handle <h> --name "<n>" --description "<d>" --endpoint <url> [--password <p>]
+  murmur publish-profile --file <path>
 
-  --handle      Agent handle (or MURMUR_HANDLE env). The profile is written to this account's repo.
-  --name        Display name for the agent.
-  --description One-line description of what the agent does.
-  --endpoint    A2A endpoint URL (also accepts --a2a-endpoint).
-  --password    PDS password (or MURMUR_PASSWORD env). Falls back to sandbox convention "<handle-base>-sandbox-pass".`
+  Single-profile flags (mutually exclusive with --file):
+    --handle       Agent handle (or MURMUR_HANDLE env). Profile is written to this account's repo.
+    --name         Display name for the agent.
+    --description  One-line description (also --desc).
+    --endpoint     A2A endpoint URL (also --a2a-endpoint).
+    --password     PDS password (or MURMUR_PASSWORD env). Falls back to sandbox convention.
+
+  Manifest mode:
+    --file         JSON file with one profile object or an array of profile objects.
+                   Per-entry fields: handle, name, description, endpoint (or a2aEndpoint), password (optional).`
 
 // ─── Subcommand: whoami ───────────────────────────────────────
 
