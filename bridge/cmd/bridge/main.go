@@ -856,16 +856,18 @@ func (b *Bridge) createSignalRecord(ctx context.Context, asHandle string, record
 		if err != nil {
 			return nil, fmt.Errorf("PDS request failed: %w", err)
 		}
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
 
-		if resp.StatusCode == 401 && attempt == 0 {
-			resp.Body.Close()
+		if isExpiredTokenError(resp.StatusCode, respBody) && attempt == 0 {
 			// Resolve the effective handle for refresh — if asHandle didn't
 			// match a session, we fell back to the bridge's own session.
 			refreshHandle := session.Handle
 			if refreshHandle == "" {
 				refreshHandle = b.handle
 			}
-			b.logger.Warn("PDS returned 401, refreshing session", "handle", refreshHandle)
+			b.logger.Warn("PDS rejected token, refreshing session",
+				"status", resp.StatusCode, "handle", refreshHandle)
 			if err := b.refreshOrReauth(refreshHandle, session.AccessToken); err != nil {
 				b.logger.Error("session refresh failed", "handle", refreshHandle, "error", err)
 				return nil, fmt.Errorf("PDS auth expired and refresh failed: %w", err)
@@ -873,21 +875,41 @@ func (b *Bridge) createSignalRecord(ctx context.Context, asHandle string, record
 			continue // retry with refreshed token
 		}
 
-		defer resp.Body.Close()
-
 		if resp.StatusCode != 200 {
-			respBody, _ := io.ReadAll(resp.Body)
 			return nil, fmt.Errorf("PDS returned HTTP %d: %s", resp.StatusCode, string(respBody))
 		}
 
 		var created createRecordResult
-		if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		if err := json.Unmarshal(respBody, &created); err != nil {
 			return nil, fmt.Errorf("decode PDS response: %w", err)
 		}
 
 		return &created, nil
 	}
 	return nil, fmt.Errorf("createSignalRecord: exhausted retry attempts")
+}
+
+// isExpiredTokenError detects PDS responses that mean "your access token is
+// no longer valid." PDS uses HTTP 401 in some cases and HTTP 400 with body
+// {"error":"ExpiredToken"} in others, so both must be checked.
+func isExpiredTokenError(statusCode int, body []byte) bool {
+	if statusCode == http.StatusUnauthorized {
+		return true
+	}
+	if statusCode != http.StatusBadRequest {
+		return false
+	}
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		return false
+	}
+	switch errResp.Error {
+	case "ExpiredToken", "InvalidToken", "AuthRequired":
+		return true
+	}
+	return false
 }
 
 // buildReplyRef builds the reply threading object for a signal record.
