@@ -52,10 +52,7 @@ AWS_SECRET_ACCESS_KEY=...
 #
 # (Sandbox passwords don't contain commas or colons; if you ever rotate to
 # something that does, switch to bridge-managed credentials instead.)
-MURMUR_AGENT_CREDS=triage-one.test:triage-one-sandbox-pass,agent-one.test:agent-one-sandbox-pass
-
-# Bridge: which handle resolves to the triage agent
-TRIAGE_HANDLE=triage-one.test
+MURMUR_AGENT_CREDS=agent-one.test:agent-one-sandbox-pass,weather-one.test:weather-one-sandbox-pass,orchestrator.test:orchestrator-sandbox-pass,threeaday-one.test:threeaday-one-sandbox-pass
 ```
 
 ## 2. Build the Relay (first time or after patching)
@@ -76,11 +73,12 @@ go build -o ../relay/relay ./cmd/relay/
 cd ..
 ```
 
-## 3. Build the Bridge and CLI
+## 3. Build the Bridge, CLI, and AppView
 
 ```bash
-cd ~/projects/murmur/bridge && go build -o bridge ./cmd/bridge/ && cd ..
-cd ~/projects/murmur/cli    && go build -o murmur .            && cd ..
+cd ~/projects/murmur/bridge  && go build -o bridge ./cmd/bridge/   && cd ..
+cd ~/projects/murmur/cli     && go build -o murmur .               && cd ..
+cd ~/projects/murmur/appview && go build -o appview ./cmd/appview/ && cd ..
 ```
 
 ## 4. Start the Stack
@@ -122,6 +120,7 @@ This creates:
 - `triage-one.test` — swarm agent account (triage)
 - `weather-one.test` — domain agent account (weather)
 - `orchestrator.test` — swarm agent account (orchestrator / general-purpose fallback)
+- `threeaday-one.test` — domain agent account (threeaday CBT coach; lives in `~/projects/agents/threeaday`)
 - `bridge.test` — bridge infrastructure account
 
 ## 6. Register PDS with Relay
@@ -132,15 +131,15 @@ This creates:
 
 ## 7–8. Start All Agents
 
-One script starts all agents (delivery, triage, weather, orchestrator) in a single terminal. Ctrl-C kills them all cleanly:
+One script starts all agents (delivery, triage, weather, orchestrator, threeaday) in a single terminal. Ctrl-C kills them all cleanly:
 
 ```bash
 ./scripts/start-agents.sh
 ```
 
-The delivery agent is expected at `~/projects/agent-skill-poc` by default; override with `AGENT_SKILL_POC_DIR` if yours lives elsewhere. Each agent runs `uv sync` on startup so venvs are created/updated automatically.
+The delivery agent is expected at `~/projects/agent-skill-poc` by default; the swarm-native agents (triage, weather, orchestrator, threeaday) at `~/projects/agents/<agent>/`. Override with `AGENT_SKILL_POC_DIR` and `AGENTS_DIR` if yours live elsewhere. Each agent runs `uv sync` on startup so venvs are created/updated automatically.
 
-Ports: delivery on 5006, triage on 5050, weather on 5051, orchestrator on 5052.
+Ports: delivery on 5006, triage on 5050, weather on 5051, orchestrator on 5052, threeaday on 5053.
 
 If you prefer separate terminals for debugging, start each agent individually:
 
@@ -149,13 +148,16 @@ If you prefer separate terminals for debugging, start each agent individually:
 cd ~/projects/agent-skill-poc && uv run python mock-agents/delivery_agent.py
 
 # Terminal 2: triage
-cd ~/projects/murmur/agents/triage && uv sync && uv run python triage_agent.py
+cd ~/projects/agents/triage && uv sync && uv run python triage_agent.py
 
 # Terminal 3: weather
-cd ~/projects/murmur/agents/weather && uv sync && uv run python weather_agent.py
+cd ~/projects/agents/weather && uv sync && uv run python weather_agent.py
 
 # Terminal 4: orchestrator
-cd ~/projects/murmur/agents/orchestrator && uv sync && uv run python orchestrator_agent.py
+cd ~/projects/agents/orchestrator && uv sync && uv run python orchestrator_agent.py
+
+# Terminal 5: threeaday
+cd ~/projects/agents/threeaday && uv sync && uv run python threeaday_agent.py
 ```
 
 The startup log shows the bridge discovery URL, the LLM base URL, and the model name. If any of those are wrong for your environment, override with `BRIDGE_DISCOVERY_URL`, `LLM_BASE_URL`, or `LLM_MODEL`.
@@ -191,9 +193,8 @@ Bridge env vars (read from `.env` or the shell — shell wins):
 | `BRIDGE_HANDLE`       | `bridge.test`                 | Bridge's atproto handle                                                                                                                                                                                |
 | `BRIDGE_PASSWORD`     | `bridge-sandbox-pass`         | Bridge account password                                                                                                                                                                                |
 | `DISCOVERY_ADDR`      | `:2471`                       | HTTP listen address for the discovery surface                                                                                                                                                          |
-| `TRIAGE_HANDLE`       | `triage.test`                 | Handle the bridge looks up to find the triage agent                                                                                                                                                    |
-| `ORCHESTRATOR_HANDLE` | `orchestrator.test`           | Handle the bridge falls back to when triage returns empty mentions. Safety net — triage should route here on its own, but if it doesn't, the bridge does.                                              |
 | `MURMUR_AGENT_CREDS`  | _(unset)_                     | Comma-separated `handle:password` pairs. Each entry gives the bridge a PDS session it can use to sign records on that agent's behalf. Agents not listed fall back to bridge authorship with a warning. |
+| `APPVIEW_URL`         | `http://localhost:2472`       | AppView base URL the bridge calls per-dispatch to fetch prior thread turns (Thread-Context A2A Extension v1). If unreachable, the bridge logs a warning and dispatches with `history: []` — strictly no worse than pre-extension behavior.                  |
 
 You should see:
 
@@ -203,6 +204,40 @@ You should see:
 - `backfilling registry from PDS` followed by `registry backfill complete`
 - `discovery server listening`
 - `connected to firehose`
+
+## 9b. Start the AppView
+
+The AppView is the canonical thread indexer. It subscribes to the relay firehose, builds an in-memory thread index, and serves two consumers:
+
+- **Bridge** — `GET /api/thread?root=<uri>` returns prior turns the bridge forwards to agents on every dispatch (Thread-Context A2A Extension v1). The bridge tolerates AppView outages (degrades to empty history); restart durability of agent conversations does depend on it being up.
+- **Browser** — humans log in as their `MURMUR_HANDLE`, see the firehose live via WebSocket, post and reply, and watch agent results stream in.
+
+In a separate terminal:
+
+```bash
+cd ~/projects/murmur
+./appview/appview
+```
+
+AppView env vars (read from `.env` or the shell — shell wins):
+
+| Variable               | Default                       | Purpose                                                                |
+| ---------------------- | ----------------------------- | ---------------------------------------------------------------------- |
+| `APPVIEW_ADDR`         | `:2472`                       | HTTP+WS listen address                                                 |
+| `RELAY_URL`            | `ws://localhost:2470`         | Relay firehose websocket                                               |
+| `PDS_URL`              | `https://pds.murmur.internal` | PDS HTTP base                                                          |
+| `BRIDGE_DISCOVERY_URL` | `http://localhost:2471`       | Bridge agent registry — used to identify agent DIDs in the feed view   |
+| `MURMUR_HANDLE`        | `carlos.test`                 | Human handle used for the AppView's "My Feed" filter and post/reply origin |
+| `MURMUR_PASSWORD`      | `carlos-sandbox-pass`         | Password for the human account — required for posting from the web UI |
+
+You should see:
+
+- `loaded env file`
+- `appview starting` with addr, relay, pds, and handle
+- `appview listening`
+- firehose subscriber connecting
+
+Open the web UI at <http://localhost:2472>. The state is in-memory only — restarting the AppView clears the feed and it repopulates from new firehose events. (Startup backfill from PDS via `listRecords` is a known follow-up.)
 
 ## 10. Publish Agent Profiles
 
@@ -336,13 +371,45 @@ curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.putRecord \
   -d "$BODY" | jq '.'
 ```
 
+**ThreeADay agent (`threeaday-one.test`):**
+
+```fish
+set PASSWD "threeaday-one-sandbox-pass"
+
+set TOKEN (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
+  -H "Content-Type: application/json" \
+  -d "{\"identifier\": \"threeaday-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.accessJwt')
+
+set DID (curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.server.createSession \
+  -H "Content-Type: application/json" \
+  -d "{\"identifier\": \"threeaday-one.test\", \"password\": \"$PASSWD\"}" | jq -r '.did')
+
+set BODY (jq -n --arg did "$DID" '{
+  repo: $did,
+  collection: "community.swarm.agent.profile",
+  rkey: "self",
+  validate: false,
+  record: {
+    "$type": "community.swarm.agent.profile",
+    name: "ThreeADay Coach",
+    description: "CBT-informed behavioral-activation coach. Manages the user daily three-task list (add, list, complete, check status) and sends gentle proactive nudges when progress is stalled.",
+    a2aEndpoint: "http://localhost:5053"
+  }
+}')
+
+curl -s -X POST https://pds.murmur.internal/xrpc/com.atproto.repo.putRecord \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "$BODY" | jq '.'
+```
+
 In the bridge terminal you should see `discovered agent profile` followed by `agent registered` for each. Verify with the CLI:
 
 ```bash
 ./cli/murmur agents
 ```
 
-All four agents should appear: `agent-one.test`, `triage-one.test`, `weather-one.test`, `orchestrator.test`.
+All five agents should appear: `agent-one.test`, `triage-one.test`, `weather-one.test`, `orchestrator.test`, `threeaday-one.test`.
 
 **Note:** `putRecord` with identical content produces no commit (no firehose event). If something is off, change the `description` to trigger a new commit, or restart the bridge — startup backfill picks up profiles regardless.
 
@@ -354,7 +421,7 @@ The CLI is the easy way:
 ./cli/murmur post "where is package 241234"
 ```
 
-That posts a tagless top-level signal. The bridge will see no mentions, no parent context, and call the triage agent to decide who should handle it.
+That posts a tagless top-level signal. The bridge sees no mentions and takes no action; the triage agent, which subscribes to the firehose independently, picks it up, decides routing, and publishes its own routing signal. The bridge then sees the routing signal and dispatches to the named agents.
 
 To post a signal addressed directly to a specific agent (bypassing triage):
 
@@ -427,10 +494,12 @@ docker compose down -v
 - **PDS won't start:** Check `docker compose logs pds`. Common issues: missing `PDS_BLOBSTORE_DISK_LOCATION` or `PDS_DEV_MODE` in pds.env.
 - **AgentGateway won't start or crashes on config:** Check `docker compose logs agentgateway`. Make sure `.env` has `WATSONX_API_KEY` and `WATSONX_PROJECT_ID` set. The CEL transformation in `agentgateway/config.yaml` interpolates these into the request body — missing values will surface here.
 - **Triage agent fails on `uv sync`:** Some `a2a-sdk` 1.0.0a transitive deps aren't declared as hard requirements. The triage `pyproject.toml` adds `sse-starlette`, `packaging`, and uses `a2a-sdk[sqlite]` and `uvicorn[standard]` to cover the gaps. If a new module surfaces, add it explicitly to dependencies.
-- **Triage returns empty mentions for everything:** Check the bridge discovery URL is reachable from triage (`curl http://localhost:2471/agents`). Then check that the LLM is reachable through gateway. Then look at the LLM raw response in the triage logs — if the model is returning prose instead of JSON, the prompt may need tuning.
+- **Triage returns empty mentions for everything:** The bridge will log ERROR and drop the signal (no orchestrator safety net). Check the bridge discovery URL is reachable from triage (`curl http://localhost:2471/agents`). Then check that the LLM is reachable through gateway. Then look at the LLM raw response in the triage logs — if the model is returning prose instead of JSON, the prompt may need tuning.
 - **Relay rejects PDS registration:** The relay needs to reach `pds.murmur.internal` via Docker DNS. Check that Caddy has the network alias and the CA bundle is mounted.
 - **Bridge can't authenticate:** Make sure the bridge account exists (`./scripts/create-accounts.sh`) and `PDS_URL` uses `https://pds.murmur.internal`.
-- **Bridge sees a signal but doesn't route to anyone:** If `mentions=[]` and the bridge logs show "no mentions and triage agent not registered", the bridge can't find the triage agent in its registry. Check that the triage profile was published and that `TRIAGE_HANDLE` matches the triage account's handle.
+- **Bridge sees a signal but doesn't route to anyone:** Tagless requests are now handled by triage via the firehose, not by a bridge-side synchronous call. If the bridge sees a `type=request` signal with `mentions=[]` and nothing happens afterward, check triage's own logs — it should log `◀ firehose request ...` followed by `▶ firehose decision: ...` and `published routing signal ...`. If those don't appear, triage isn't subscribed (check `authenticated to PDS` and `firehose subscriber starting` at triage startup). If they do appear but dispatch doesn't follow, the bridge isn't seeing the routing signal — verify the relay firehose is delivering by watching bridge logs for the routing signal's URI.
 - **A2A dispatch fails with "Method not found":** The agent's A2A SDK version doesn't match. The bridge uses the 1.0 spec (`SendMessage`). Ensure the agent uses `a2a-sdk >= 1.0.0a0` (Python) or equivalent.
 - **A2A dispatch fails with unknown field errors:** The agent's SDK rejects fields like `kind`. This is a protobuf vs JSON format mismatch. The Go SDK (`a2a-go/v2`) and Python SDK (`a2a-sdk >= 1.0.0a0`) should agree — check both are on the latest versions.
 - **PDS env changes don't take effect:** Use `docker compose up -d --force-recreate pds`, not `restart`.
+- **AppView shows an empty feed at startup:** Expected today — state is in-memory and the firehose only delivers new events. Post a new signal and it should appear in real time. Persistent backfill from PDS is a known follow-up.
+- **Agent forgets a thread after restart:** The bridge fetches prior turns from the AppView per-dispatch; if the AppView is down the bridge logs a warning and sends `history: []`, so the agent legitimately has no context. Confirm `curl http://localhost:2472/api/thread?root=<rootURI>` returns the expected signals, then restart the AppView and try again.
