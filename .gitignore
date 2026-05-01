@@ -7,3 +7,4 @@ relay/relay
 bridge/bridge
 certs/
 appview/appview
+*.cursor

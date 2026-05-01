@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	comatproto "github.com/bluesky-social/indigo/api/atproto"
@@ -52,6 +53,13 @@ type Bridge struct {
 	// authored under match the agent's identity, not the bridge's).
 	sessions   map[string]*agentSession
 	sessionsMu sync.RWMutex
+
+	// Firehose cursor persistence. lastSeq holds the highest sequence number
+	// observed; cursorPath is where it's serialized. The cursor is loaded at
+	// startup and used to resume the relay subscription, so events committed
+	// during a brief downtime are replayed on reconnect rather than lost.
+	lastSeq    atomic.Int64
+	cursorPath string
 }
 
 // agentSession is a single PDS session held by the bridge on behalf of an
@@ -84,6 +92,7 @@ func main() {
 	bridgeHandle := envOrDefault("BRIDGE_HANDLE", "bridge.test")
 	bridgePassword := envOrDefault("BRIDGE_PASSWORD", "bridge-sandbox-pass")
 	discoveryAddr := envOrDefault("DISCOVERY_ADDR", ":2471")
+	cursorPath := envOrDefault("BRIDGE_CURSOR_PATH", "bridge.cursor")
 	agentCredsRaw := os.Getenv("MURMUR_AGENT_CREDS")
 
 	registry := NewAgentRegistry(logger)
@@ -98,6 +107,14 @@ func main() {
 		password:       bridgePassword,
 		sessions:       make(map[string]*agentSession),
 		publishBaseURL: "http://localhost" + discoveryAddr,
+		cursorPath:     cursorPath,
+	}
+
+	if seq, ok := loadCursor(cursorPath); ok {
+		b.lastSeq.Store(seq)
+		logger.Info("resuming firehose from saved cursor", "path", cursorPath, "seq", seq)
+	} else {
+		logger.Info("no saved firehose cursor; subscribing from live tail", "path", cursorPath)
 	}
 
 	if err := b.authenticate(); err != nil {
@@ -319,6 +336,13 @@ func (b *Bridge) consumeFirehose(ctx context.Context) error {
 		default:
 		}
 
+		// Re-read the cursor on every connection attempt so reconnects after a
+		// transient drop pick up where we left off, not where we started.
+		if seq := b.lastSeq.Load(); seq > 0 {
+			u.RawQuery = fmt.Sprintf("cursor=%d", seq)
+		} else {
+			u.RawQuery = ""
+		}
 		urlStr := u.String()
 		b.logger.Info("connecting to firehose", "url", urlStr, "retries", retries)
 
@@ -394,6 +418,14 @@ func (b *Bridge) handleCommit(ctx context.Context, evt *comatproto.SyncSubscribe
 		case profileCollection:
 			b.handleAgentProfile(ctx, evt.Repo, record)
 		}
+	}
+
+	// Advance the cursor regardless of whether any op was meaningful — we
+	// just need to remember "we got past this seq" so reconnects don't replay
+	// from before it.
+	b.lastSeq.Store(evt.Seq)
+	if err := saveCursor(b.cursorPath, evt.Seq); err != nil {
+		b.logger.Warn("failed to persist firehose cursor", "path", b.cursorPath, "seq", evt.Seq, "error", err)
 	}
 
 	return nil

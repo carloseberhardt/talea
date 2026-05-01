@@ -30,6 +30,7 @@ func main() {
 	discoveryURL := envOrDefault("BRIDGE_DISCOVERY_URL", "http://localhost:2471")
 	murmurHandle := envOrDefault("MURMUR_HANDLE", "carlos.test")
 	murmurPassword := envOrDefault("MURMUR_PASSWORD", "carlos-sandbox-pass")
+	cursorPath := envOrDefault("APPVIEW_CURSOR_PATH", "appview.cursor")
 
 	logger.Info("appview starting",
 		"addr", addr,
@@ -66,7 +67,7 @@ func main() {
 	srv := &http.Server{Addr: addr, Handler: mux}
 
 	// Start the firehose subscriber in the background.
-	go runFirehose(ctx, relayURL, pdsURL, state, logger)
+	go runFirehose(ctx, relayURL, pdsURL, cursorPath, state, logger)
 
 	// Walk every known repo's community.swarm.signal records once at startup
 	// to seed the in-memory index. Runs in parallel with the firehose; State

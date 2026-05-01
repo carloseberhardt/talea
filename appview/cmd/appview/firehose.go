@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	comatproto "github.com/bluesky-social/indigo/api/atproto"
@@ -24,8 +25,9 @@ const signalCollection = "community.swarm.signal"
 
 // runFirehose connects to the relay firehose and feeds indexed signals into
 // state. It retries with a 5 s backoff on connection failures. It returns only
-// when ctx is cancelled.
-func runFirehose(ctx context.Context, relayURL string, pdsURL string, state *State, logger *slog.Logger) {
+// when ctx is cancelled. The cursor at cursorPath persists the highest seq
+// processed; restarts resume from there instead of the live tail.
+func runFirehose(ctx context.Context, relayURL, pdsURL, cursorPath string, state *State, logger *slog.Logger) {
 	u, err := url.Parse(relayURL)
 	if err != nil {
 		logger.Error("invalid relay URL", "error", err)
@@ -39,11 +41,27 @@ func runFirehose(ctx context.Context, relayURL string, pdsURL string, state *Sta
 	}
 	u.Path = "xrpc/com.atproto.sync.subscribeRepos"
 
+	var lastSeq atomic.Int64
+	if seq, ok := loadCursor(cursorPath); ok {
+		lastSeq.Store(seq)
+		logger.Info("resuming firehose from saved cursor", "path", cursorPath, "seq", seq)
+	} else {
+		logger.Info("no saved firehose cursor; subscribing from live tail", "path", cursorPath)
+	}
+
 	handleCache := &sync.Map{} // DID → handle string
 
 	rsc := &events.RepoStreamCallbacks{
 		RepoCommit: func(evt *comatproto.SyncSubscribeRepos_Commit) error {
-			return handleCommit(ctx, evt, pdsURL, state, handleCache, logger)
+			err := handleCommit(ctx, evt, pdsURL, state, handleCache, logger)
+			// Advance cursor regardless of per-event success — we just need to
+			// remember "we got past this seq" so reconnects don't replay from
+			// before it.
+			lastSeq.Store(evt.Seq)
+			if writeErr := saveCursor(cursorPath, evt.Seq); writeErr != nil {
+				logger.Warn("failed to persist firehose cursor", "path", cursorPath, "seq", evt.Seq, "error", writeErr)
+			}
+			return err
 		},
 	}
 
@@ -55,6 +73,13 @@ func runFirehose(ctx context.Context, relayURL string, pdsURL string, state *Sta
 		default:
 		}
 
+		// Re-read the cursor on every connection attempt so reconnects after a
+		// transient drop pick up where we left off, not where we started.
+		if seq := lastSeq.Load(); seq > 0 {
+			u.RawQuery = fmt.Sprintf("cursor=%d", seq)
+		} else {
+			u.RawQuery = ""
+		}
 		urlStr := u.String()
 		logger.Info("connecting to relay firehose", "url", urlStr, "retries", retries)
 
