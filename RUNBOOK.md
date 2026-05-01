@@ -195,6 +195,7 @@ Bridge env vars (read from `.env` or the shell — shell wins):
 | `DISCOVERY_ADDR`      | `:2471`                       | HTTP listen address for the discovery surface                                                                                                                                                          |
 | `MURMUR_AGENT_CREDS`  | _(unset)_                     | Comma-separated `handle:password` pairs. Each entry gives the bridge a PDS session it can use to sign records on that agent's behalf. Agents not listed fall back to bridge authorship with a warning. |
 | `APPVIEW_URL`         | `http://localhost:2472`       | AppView base URL the bridge calls per-dispatch to fetch prior thread turns (Thread-Context A2A Extension v1). If unreachable, the bridge logs a warning and dispatches with `history: []` — strictly no worse than pre-extension behavior.                  |
+| `BRIDGE_CURSOR_PATH`  | `bridge.cursor`               | File where the bridge persists the highest firehose seq processed. Loaded at startup and passed as `?cursor=<seq>` to `subscribeRepos` so events committed during a brief downtime are replayed instead of lost to the live tail. Gitignored.            |
 
 You should see:
 
@@ -229,6 +230,7 @@ AppView env vars (read from `.env` or the shell — shell wins):
 | `BRIDGE_DISCOVERY_URL` | `http://localhost:2471`       | Bridge agent registry — used to identify agent DIDs in the feed view   |
 | `MURMUR_HANDLE`        | `carlos.test`                 | Human handle used for the AppView's "My Feed" filter and post/reply origin |
 | `MURMUR_PASSWORD`      | `carlos-sandbox-pass`         | Password for the human account — required for posting from the web UI |
+| `APPVIEW_CURSOR_PATH`  | `appview.cursor`              | File where the AppView persists the highest firehose seq processed. Same role as `BRIDGE_CURSOR_PATH`: replay-on-restart instead of live-tail-on-restart. Gitignored.        |
 
 You should see:
 
@@ -386,3 +388,5 @@ docker compose down -v
 - **PDS env changes don't take effect:** Use `docker compose up -d --force-recreate pds`, not `restart`.
 - **AppView shows an empty feed at startup:** Expected today — state is in-memory and the firehose only delivers new events. Post a new signal and it should appear in real time. Persistent backfill from PDS is a known follow-up.
 - **Agent forgets a thread after restart:** The bridge fetches prior turns from the AppView per-dispatch; if the AppView is down the bridge logs a warning and sends `history: []`, so the agent legitimately has no context. Confirm `curl http://localhost:2472/api/thread?root=<rootURI>` returns the expected signals, then restart the AppView and try again.
+- **Bridge or AppView seems to skip events posted during a restart:** Look for `resuming firehose from saved cursor seq=<N>` in the startup log. If you see `no saved firehose cursor; subscribing from live tail` instead, the cursor file is missing or got reset — events committed before this run won't be replayed. The cursor files are `bridge.cursor` / `appview.cursor` in each service's working directory; deleting them forces a live-tail restart.
+- **Triage drops a tagless request with "no fallback":** Means the bridge was unreachable AND triage's agent-list cache hadn't been populated yet (cold start with bridge down). Once triage successfully reaches the bridge once, subsequent bridge outages fall back to the cached list and route normally. Triage logs `agents-cache warmed at startup: N agent(s)` when its background warmup task completes.
