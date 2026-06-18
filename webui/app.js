@@ -1,5 +1,12 @@
 // Murmur Swarm Appview — vanilla JS frontend
 
+// AppView API origin. Configured in config.js; empty string means same origin
+// as the page that served this script (legacy / reverse-proxy behavior).
+const API_BASE = (window.MURMUR_CONFIG && window.MURMUR_CONFIG.apiBase) || '';
+const WS_BASE = API_BASE
+  ? API_BASE.replace(/^http/, 'ws')
+  : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
+
 let threads = [];
 let currentThreadRoot = null;
 let currentThread = null;
@@ -22,8 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── WebSocket ────────────────────────────────────────────────────────────────
 
 function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws = new WebSocket(`${WS_BASE}/ws`);
 
   ws.onmessage = (evt) => {
     let msg;
@@ -66,7 +72,7 @@ function connectWS() {
 
 async function loadMe() {
   try {
-    const resp = await fetch('/api/me');
+    const resp = await fetch(`${API_BASE}/api/me`);
     if (!resp.ok) return;
     me = await resp.json();
     const el = document.getElementById('me-indicator');
@@ -80,7 +86,7 @@ async function loadMe() {
 
 async function loadAgents() {
   try {
-    const resp = await fetch('/api/agents');
+    const resp = await fetch(`${API_BASE}/api/agents`);
     if (!resp.ok) return;
     const data = await resp.json();
     agentRegistry = Array.isArray(data) ? data : (data.agents || []);
@@ -92,7 +98,7 @@ async function loadAgents() {
 
 async function loadThreads() {
   try {
-    const resp = await fetch('/api/threads');
+    const resp = await fetch(`${API_BASE}/api/threads`);
     if (!resp.ok) return;
     threads = await resp.json();
     if (currentView === 'threads') {
@@ -107,7 +113,7 @@ async function openThread(rootUri) {
   currentThreadRoot = rootUri;
   currentView = 'thread';
   try {
-    const resp = await fetch(`/api/thread?root=${encodeURIComponent(rootUri)}`);
+    const resp = await fetch(`${API_BASE}/api/thread?root=${encodeURIComponent(rootUri)}`);
     if (!resp.ok) return;
     currentThread = await resp.json();
     renderThreadDetail(currentThread);
@@ -147,7 +153,7 @@ async function openAgentProfile(handle) {
 
 async function fetchAgentCard(endpoint) {
   try {
-    const resp = await fetch(`/api/agent-card?endpoint=${encodeURIComponent(endpoint)}`);
+    const resp = await fetch(`${API_BASE}/api/agent-card?endpoint=${encodeURIComponent(endpoint)}`);
     if (!resp.ok) return null;
     return await resp.json();
   } catch (e) {
@@ -158,7 +164,7 @@ async function fetchAgentCard(endpoint) {
 
 async function fetchAgentSignals(handle) {
   try {
-    const resp = await fetch(`/api/agent?handle=${encodeURIComponent(handle)}`);
+    const resp = await fetch(`${API_BASE}/api/agent?handle=${encodeURIComponent(handle)}`);
     if (!resp.ok) return [];
     return await resp.json();
   } catch (e) {
@@ -397,7 +403,7 @@ async function submitReply(btn, parentUri) {
   const mentions = extractMentions(text);
 
   try {
-    const resp = await fetch('/api/post', {
+    const resp = await fetch(`${API_BASE}/api/post`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: text, mentions, parentUri }),
@@ -456,7 +462,7 @@ async function submitPost() {
   btn.textContent = 'Posting\u2026';
 
   try {
-    const resp = await fetch('/api/post', {
+    const resp = await fetch(`${API_BASE}/api/post`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: text, mentions }),

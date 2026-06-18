@@ -13,36 +13,59 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// registerHandlers wires all HTTP routes onto mux.
+// registerHandlers wires all HTTP routes onto mux. The /api/* routes are
+// wrapped with withCORS so the web client (served from a separate origin) can
+// call them, including the preflight OPTIONS that a JSON POST triggers.
 func registerHandlers(mux *http.ServeMux, state *State, hub *Hub, poster *Poster, discoveryURL string, logger *slog.Logger) {
-	mux.HandleFunc("/api/threads", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/threads", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		handleThreads(w, r, state)
-	})
-	mux.HandleFunc("/api/thread", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/thread", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		handleThread(w, r, state)
-	})
-	mux.HandleFunc("/api/agents", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/agents", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		handleAgents(w, r, discoveryURL, logger)
-	})
-	mux.HandleFunc("/api/agent", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/agent", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		handleAgent(w, r, state)
-	})
-	mux.HandleFunc("/api/agent-card", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/agent-card", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		handleAgentCard(w, r, discoveryURL, logger)
-	})
-	mux.HandleFunc("/api/post", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/post", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		handlePost(w, r, poster, state, logger)
-	})
-	mux.HandleFunc("/api/me", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/me", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		handleMe(w, r, poster)
-	})
+	}))
+	// WebSocket upgrades don't use CORS preflight; cross-origin is gated by the
+	// upgrader's CheckOrigin (which allows all). No withCORS wrapper here.
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWS(hub, logger, w, r)
 	})
 }
 
-func setCORSAndJSON(w http.ResponseWriter) {
+// withCORS applies permissive CORS headers and short-circuits preflight OPTIONS
+// requests with 204, so the separate-origin web client can call the API.
+func withCORS(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h(w, r)
+	}
+}
+
+func setCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+}
+
+func setCORSAndJSON(w http.ResponseWriter) {
+	setCORS(w)
 	w.Header().Set("Content-Type", "application/json")
 }
 

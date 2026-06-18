@@ -2,16 +2,11 @@ package main
 
 import (
 	"context"
-	"embed"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 )
-
-//go:embed static
-var staticFiles embed.FS
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -56,13 +51,9 @@ func main() {
 	mux := http.NewServeMux()
 	registerHandlers(mux, state, hub, poster, discoveryURL, logger)
 
-	// Serve embedded static files at / (strip the "static/" prefix).
-	sub, err := fs.Sub(staticFiles, "static")
-	if err != nil {
-		logger.Error("failed to create static sub-fs", "error", err)
-		os.Exit(1)
-	}
-	mux.Handle("/", http.FileServer(http.FS(sub)))
+	// The AppView is a pure indexer + JSON/WS API; the web client is served
+	// as a separate static component (see webui/) that addresses this API via
+	// a configurable base URL. CORS on the API handlers allows that origin.
 
 	srv := &http.Server{Addr: addr, Handler: mux}
 
