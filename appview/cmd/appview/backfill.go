@@ -32,10 +32,10 @@ type backfillSource struct {
 // resolution fails, listRecords errors), the affected source is skipped with a
 // warning. The AppView still functions; it just has a smaller cold-start view
 // until the firehose catches up.
-func runBackfill(ctx context.Context, pdsURL, discoveryURL, humanHandle string, state *State, logger *slog.Logger) {
-	logger.Info("backfill starting", "pds", pdsURL, "discovery", discoveryURL, "human", humanHandle)
+func runBackfill(ctx context.Context, pdsURL, humanHandle string, state *State, logger *slog.Logger) {
+	logger.Info("backfill starting", "pds", pdsURL, "human", humanHandle)
 
-	sources := collectAuthors(ctx, pdsURL, discoveryURL, humanHandle, logger)
+	sources := collectAuthors(ctx, pdsURL, humanHandle, state, logger)
 	if len(sources) == 0 {
 		logger.Warn("backfill: no authors discovered, nothing to do")
 		return
@@ -60,33 +60,57 @@ func runBackfill(ctx context.Context, pdsURL, discoveryURL, humanHandle string, 
 		state.AddSignalSilent(sig)
 	}
 
-	logger.Info("backfill complete", "authors", len(sources), "signals", len(allSigs))
+	logger.Info("backfill complete", "authors", len(sources), "profiles", len(state.ListProfiles()), "signals", len(allSigs))
 }
 
-// collectAuthors enumerates every account whose signal records the AppView
-// should backfill: the configured human handle, plus every agent in the
-// bridge's discovery registry.
-func collectAuthors(ctx context.Context, pdsURL, discoveryURL, humanHandle string, logger *slog.Logger) []backfillSource {
+// collectAuthors enumerates every repo on the PDS, seeds the agent directory
+// from each repo's community.swarm.agent.profile record, and returns the set of
+// authors (agents + the configured human) whose signal records should be
+// backfilled. The AppView discovers agents itself — it no longer asks the
+// bridge — so the indexer owns the directory.
+//
+// listRepos is single-PDS; in a federated deployment, live discovery comes from
+// the relay firehose (which aggregates every PDS) and this backfill is just a
+// cold-start convenience for the local PDS.
+func collectAuthors(ctx context.Context, pdsURL, humanHandle string, state *State, logger *slog.Logger) []backfillSource {
+	seen := make(map[string]bool)
 	var sources []backfillSource
+
+	add := func(did, handle string) {
+		if did == "" || seen[did] {
+			return
+		}
+		seen[did] = true
+		sources = append(sources, backfillSource{DID: did, Handle: handle})
+	}
 
 	if humanHandle != "" {
 		if did, err := resolveDID(ctx, pdsURL, humanHandle); err == nil && did != "" {
-			sources = append(sources, backfillSource{DID: did, Handle: humanHandle})
+			add(did, humanHandle)
 		} else if err != nil {
 			logger.Warn("backfill: failed to resolve human handle", "handle", humanHandle, "error", err)
 		}
 	}
 
-	agents, err := fetchAgentRegistry(ctx, discoveryURL)
+	dids, err := listAllRepos(ctx, pdsURL, logger)
 	if err != nil {
-		logger.Warn("backfill: failed to fetch /agents from bridge", "error", err)
+		logger.Warn("backfill: listRepos failed — directory will populate from the firehose only", "error", err)
 		return sources
 	}
-	for _, a := range agents {
-		if a.DID == "" {
+	for _, did := range dids {
+		rec, err := fetchProfileRecord(ctx, pdsURL, did)
+		if err != nil {
+			logger.Warn("backfill: failed to fetch agent profile", "did", did, "error", err)
 			continue
 		}
-		sources = append(sources, backfillSource{DID: a.DID, Handle: a.Handle})
+		if rec == nil {
+			continue // repo has no profile — not an agent
+		}
+		handle := fetchHandle(ctx, did, pdsURL, logger)
+		if prof := recordToProfile(rec, did, handle); prof != nil {
+			state.UpsertProfile(prof)
+			add(did, handle)
+		}
 	}
 	return sources
 }
@@ -116,16 +140,54 @@ func resolveDID(ctx context.Context, pdsURL, handle string) (string, error) {
 	return out.DID, nil
 }
 
-// agentRegistryEntry mirrors the bridge's /agents wire shape.
-type agentRegistryEntry struct {
-	Handle      string `json:"handle"`
-	DID         string `json:"did"`
-	Name        string `json:"name,omitempty"`
-	A2AEndpoint string `json:"a2aEndpoint"`
+// listAllRepos enumerates every DID hosted on the PDS, paginating via cursor.
+// This is the same enumeration the bridge does for its registry; here it drives
+// directory + signal backfill so the AppView doesn't depend on the bridge.
+func listAllRepos(ctx context.Context, pdsURL string, logger *slog.Logger) ([]string, error) {
+	var dids []string
+	cursor := ""
+	client := &http.Client{Timeout: backfillTimeout}
+	for {
+		u := fmt.Sprintf("%s/xrpc/com.atproto.sync.listRepos?limit=500", pdsURL)
+		if cursor != "" {
+			u += "&cursor=" + url.QueryEscape(cursor)
+		}
+		req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+		if err != nil {
+			return dids, err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return dids, err
+		}
+		var page struct {
+			Cursor string `json:"cursor"`
+			Repos  []struct {
+				DID string `json:"did"`
+			} `json:"repos"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&page)
+		resp.Body.Close()
+		if err != nil {
+			return dids, fmt.Errorf("decode listRepos: %w", err)
+		}
+		for _, r := range page.Repos {
+			dids = append(dids, r.DID)
+		}
+		if page.Cursor == "" || len(page.Repos) == 0 {
+			break
+		}
+		cursor = page.Cursor
+	}
+	return dids, nil
 }
 
-func fetchAgentRegistry(ctx context.Context, discoveryURL string) ([]agentRegistryEntry, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", discoveryURL+"/agents", nil)
+// fetchProfileRecord returns the community.swarm.agent.profile record value for
+// a DID, or nil if the repo has no profile of that collection.
+func fetchProfileRecord(ctx context.Context, pdsURL, did string) (map[string]any, error) {
+	u := fmt.Sprintf("%s/xrpc/com.atproto.repo.listRecords?repo=%s&collection=%s&limit=1",
+		pdsURL, url.QueryEscape(did), profileCollection)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -136,13 +198,21 @@ func fetchAgentRegistry(ctx context.Context, discoveryURL string) ([]agentRegist
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("/agents status %d", resp.StatusCode)
+		// Typically "no records of that collection in this repo" — not an error.
+		return nil, nil
 	}
-	var out []agentRegistryEntry
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
+	var result struct {
+		Records []struct {
+			Value map[string]any `json:"value"`
+		} `json:"records"`
 	}
-	return out, nil
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode listRecords: %w", err)
+	}
+	if len(result.Records) == 0 {
+		return nil, nil
+	}
+	return result.Records[0].Value, nil
 }
 
 // listSignals walks com.atproto.repo.listRecords for one repo, paginating

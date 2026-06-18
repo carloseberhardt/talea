@@ -16,7 +16,7 @@ var upgrader = websocket.Upgrader{
 // registerHandlers wires all HTTP routes onto mux. The /api/* routes are
 // wrapped with withCORS so the web client (served from a separate origin) can
 // call them, including the preflight OPTIONS that a JSON POST triggers.
-func registerHandlers(mux *http.ServeMux, state *State, hub *Hub, poster *Poster, discoveryURL string, logger *slog.Logger) {
+func registerHandlers(mux *http.ServeMux, state *State, hub *Hub, poster *Poster, logger *slog.Logger) {
 	mux.HandleFunc("/api/threads", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		handleThreads(w, r, state)
 	}))
@@ -24,13 +24,13 @@ func registerHandlers(mux *http.ServeMux, state *State, hub *Hub, poster *Poster
 		handleThread(w, r, state)
 	}))
 	mux.HandleFunc("/api/agents", withCORS(func(w http.ResponseWriter, r *http.Request) {
-		handleAgents(w, r, discoveryURL, logger)
+		handleAgents(w, r, state)
 	}))
 	mux.HandleFunc("/api/agent", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		handleAgent(w, r, state)
 	}))
 	mux.HandleFunc("/api/agent-card", withCORS(func(w http.ResponseWriter, r *http.Request) {
-		handleAgentCard(w, r, discoveryURL, logger)
+		handleAgentCard(w, r, logger)
 	}))
 	mux.HandleFunc("/api/post", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		handlePost(w, r, poster, state, logger)
@@ -115,23 +115,20 @@ func handleThread(w http.ResponseWriter, r *http.Request, state *State) {
 	writeJSON(w, signals)
 }
 
-// GET /api/agents — proxy to bridge discovery
-func handleAgents(w http.ResponseWriter, r *http.Request, discoveryURL string, logger *slog.Logger) {
+// GET /api/agents — the swarm agent directory, served from the AppView's own
+// firehose-indexed profile store. The AppView is the canonical, network-wide
+// directory (a relay-fed indexer sees every agent); it no longer proxies the
+// bridge's local dispatch registry.
+func handleAgents(w http.ResponseWriter, r *http.Request, state *State) {
 	if r.Method != http.MethodGet {
 		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	resp, err := http.Get(discoveryURL + "/agents")
-	if err != nil {
-		logger.Warn("failed to proxy /agents request", "error", err)
-		writeError(w, "upstream error", http.StatusBadGateway)
-		return
+	profiles := state.ListProfiles()
+	if profiles == nil {
+		profiles = []*AgentProfile{}
 	}
-	defer resp.Body.Close()
-
-	setCORSAndJSON(w)
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	writeJSON(w, profiles)
 }
 
 // GET /api/agent?handle=<handle>
@@ -153,7 +150,9 @@ func handleAgent(w http.ResponseWriter, r *http.Request, state *State) {
 }
 
 // GET /api/agent-card?endpoint=<a2a_endpoint>
-func handleAgentCard(w http.ResponseWriter, r *http.Request, discoveryURL string, logger *slog.Logger) {
+// Live-fetches the agent's A2A card directly from its endpoint (the card is the
+// authoritative skill description); independent of the bridge.
+func handleAgentCard(w http.ResponseWriter, r *http.Request, logger *slog.Logger) {
 	if r.Method != http.MethodGet {
 		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

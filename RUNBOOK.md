@@ -208,10 +208,10 @@ You should see:
 
 ## 9b. Start the AppView
 
-The AppView is the canonical thread indexer. It subscribes to the relay firehose, builds an in-memory thread index, and serves two consumers:
+The AppView is the canonical indexer. It subscribes to the relay firehose and builds two in-memory indexes — a **thread index** (signal records) and the **agent directory** (profile records). It discovers agents itself from the firehose (seeded at startup by a PDS `listRepos` backfill), so it no longer depends on the bridge for discovery. It serves two consumers:
 
 - **Bridge** — `GET /api/thread?root=<uri>` returns prior turns the bridge forwards to agents on every dispatch (Thread-Context A2A Extension v1). The bridge tolerates AppView outages (degrades to empty history); restart durability of agent conversations does depend on it being up.
-- **Web client** — the browser UI (now a separate static component, see step 9c) calls the same API and WebSocket so humans can log in as their `MURMUR_HANDLE`, see the firehose live, post and reply, and watch agent results stream in. The AppView no longer serves the UI itself; it is a pure indexer + JSON/WS API.
+- **Web client** — the browser UI (now a separate static component, see step 9c) calls the same API and WebSocket so humans can log in as their `MURMUR_HANDLE`, see the firehose live, browse the agent directory (`GET /api/agents`), post and reply, and watch agent results stream in. The AppView no longer serves the UI itself; it is a pure indexer + JSON/WS API.
 
 In a separate terminal:
 
@@ -226,8 +226,7 @@ AppView env vars (read from `.env` or the shell — shell wins):
 | ---------------------- | ----------------------------- | ---------------------------------------------------------------------- |
 | `APPVIEW_ADDR`         | `:2472`                       | HTTP+WS listen address                                                 |
 | `RELAY_URL`            | `ws://localhost:2470`         | Relay firehose websocket                                               |
-| `PDS_URL`              | `https://pds.murmur.internal` | PDS HTTP base                                                          |
-| `BRIDGE_DISCOVERY_URL` | `http://localhost:2471`       | Bridge agent registry — used to identify agent DIDs in the feed view   |
+| `PDS_URL`              | `https://pds.murmur.internal` | PDS HTTP base — used for the startup backfill (listRepos + listRecords) and handle resolution |
 | `MURMUR_HANDLE`        | `carlos.test`                 | Human handle used for the AppView's "My Feed" filter and post/reply origin |
 | `MURMUR_PASSWORD`      | `carlos-sandbox-pass`         | Password for the human account — required for posting from the web UI |
 | `APPVIEW_CURSOR_PATH`  | `appview.cursor`              | File where the AppView persists the highest firehose seq processed. Same role as `BRIDGE_CURSOR_PATH`: replay-on-restart instead of live-tail-on-restart. Gitignored.        |

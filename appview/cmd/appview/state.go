@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -36,6 +37,22 @@ type A2AInfo struct {
 	ContextID string `json:"contextId,omitempty"`
 }
 
+// AgentProfile is a community.swarm.agent.profile record indexed by the appview.
+// Together these form the swarm's agent directory: discovered from the relay
+// firehose (federation-correct, network-wide) and seeded by startup backfill.
+// The AppView is the canonical "who's in the swarm" index — queried by the web
+// client today and by routing agents (the orchestrator) in a later pass, which
+// is why discovery belongs here rather than behind the bridge's dispatch cache.
+type AgentProfile struct {
+	DID         string    `json:"did"`
+	Handle      string    `json:"handle"`
+	Name        string    `json:"name,omitempty"`
+	Description string    `json:"description,omitempty"`
+	A2AEndpoint string    `json:"a2aEndpoint"`
+	Status      string    `json:"status,omitempty"`
+	IndexedAt   time.Time `json:"indexedAt"`
+}
+
 // Thread is an in-memory collection of signals sharing the same root.
 type Thread struct {
 	RootURI   string
@@ -57,12 +74,13 @@ type ThreadSummary struct {
 
 // State holds the appview's in-memory view of the swarm.
 type State struct {
-	mu           sync.RWMutex
-	threads      map[string]*Thread   // keyed by root URI
-	byAuthor     map[string][]*Signal // keyed by handle
-	recentRoots  []string             // ring buffer of root URIs, newest first
-	handleCache  sync.Map             // DID → handle string
-	hub          *Hub
+	mu          sync.RWMutex
+	threads     map[string]*Thread       // keyed by root URI
+	byAuthor    map[string][]*Signal     // keyed by handle
+	profiles    map[string]*AgentProfile // agent directory, keyed by DID
+	recentRoots []string                 // ring buffer of root URIs, newest first
+	handleCache sync.Map                 // DID → handle string
+	hub         *Hub
 }
 
 // NewState creates an empty State wired to the given Hub for broadcasting.
@@ -70,6 +88,7 @@ func NewState(hub *Hub) *State {
 	return &State{
 		threads:  make(map[string]*Thread),
 		byAuthor: make(map[string][]*Signal),
+		profiles: make(map[string]*AgentProfile),
 		hub:      hub,
 	}
 }
@@ -276,6 +295,37 @@ func (s *State) GetAuthorSignals(handle string) []*Signal {
 	sigs := s.byAuthor[handle]
 	out := make([]*Signal, len(sigs))
 	copy(out, sigs)
+	return out
+}
+
+// UpsertProfile adds or updates an agent profile in the directory (keyed by DID).
+func (s *State) UpsertProfile(p *AgentProfile) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.profiles[p.DID] = p
+}
+
+// RemoveProfile drops an agent profile by DID. Returns true if it was present.
+func (s *State) RemoveProfile(did string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.profiles[did]; !ok {
+		return false
+	}
+	delete(s.profiles, did)
+	return true
+}
+
+// ListProfiles returns a copy of every indexed agent profile, sorted by handle.
+func (s *State) ListProfiles() []*AgentProfile {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*AgentProfile, 0, len(s.profiles))
+	for _, p := range s.profiles {
+		cp := *p
+		out = append(out, &cp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Handle < out[j].Handle })
 	return out
 }
 

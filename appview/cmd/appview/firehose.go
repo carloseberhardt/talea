@@ -21,7 +21,10 @@ import (
 	gorillaws "github.com/gorilla/websocket"
 )
 
-const signalCollection = "community.swarm.signal"
+const (
+	signalCollection  = "community.swarm.signal"
+	profileCollection = "community.swarm.agent.profile"
+)
 
 // runFirehose connects to the relay firehose and feeds indexed signals into
 // state. It retries with a 5 s backoff on connection failures. It returns only
@@ -125,15 +128,28 @@ func handleCommit(
 	}
 
 	for _, op := range evt.Ops {
-		if op.Action != "create" {
-			continue
-		}
-
 		collection, rkey, err := syntax.ParseRepoPath(op.Path)
 		if err != nil {
 			continue
 		}
-		if collection.String() != signalCollection {
+		colStr := collection.String()
+		if colStr != signalCollection && colStr != profileCollection {
+			continue
+		}
+
+		// Deletes carry no record bytes — handle them before fetching. Only
+		// profile deletes are meaningful (drop the agent from the directory);
+		// signal deletes are ignored, matching the bridge.
+		if op.Action == "delete" {
+			if colStr == profileCollection {
+				if state.RemoveProfile(evt.Repo) {
+					logger.Info("agent profile removed", "did", evt.Repo)
+				}
+			}
+			continue
+		}
+
+		if op.Action != "create" && op.Action != "update" {
 			continue
 		}
 
@@ -149,24 +165,56 @@ func handleCommit(
 			continue
 		}
 
-		uri := fmt.Sprintf("at://%s/%s/%s", evt.Repo, signalCollection, rkey.String())
-		cid := ""
-		if op.Cid != nil {
-			cid = op.Cid.String()
-		}
-
 		handle := resolveHandle(ctx, evt.Repo, pdsURL, handleCache, logger)
-		sig := recordToSignal(record, uri, cid, evt.Repo, handle)
 
-		logger.Info("signal indexed",
-			"uri", sig.URI,
-			"type", sig.Type,
-			"author", sig.AuthorHandle,
-		)
+		switch colStr {
+		case signalCollection:
+			// Signals are immutable; only index creates (updates are ignored).
+			if op.Action != "create" {
+				continue
+			}
+			uri := fmt.Sprintf("at://%s/%s/%s", evt.Repo, signalCollection, rkey.String())
+			cid := ""
+			if op.Cid != nil {
+				cid = op.Cid.String()
+			}
+			sig := recordToSignal(record, uri, cid, evt.Repo, handle)
+			logger.Info("signal indexed", "uri", sig.URI, "type", sig.Type, "author", sig.AuthorHandle)
+			state.AddSignal(sig)
 
-		state.AddSignal(sig)
+		case profileCollection:
+			prof := recordToProfile(record, evt.Repo, handle)
+			if prof == nil {
+				continue
+			}
+			logger.Info("agent profile indexed", "did", prof.DID, "handle", prof.Handle, "endpoint", prof.A2AEndpoint)
+			state.UpsertProfile(prof)
+		}
 	}
 	return nil
+}
+
+// recordToProfile converts a raw CBOR-decoded community.swarm.agent.profile
+// record into an AgentProfile. Returns nil for profiles without an a2aEndpoint
+// (identity + locator is the minimum a directory entry needs), matching the
+// bridge's registration guard.
+func recordToProfile(record map[string]any, did, handle string) *AgentProfile {
+	endpoint, _ := record["a2aEndpoint"].(string)
+	if endpoint == "" {
+		return nil
+	}
+	name, _ := record["name"].(string)
+	desc, _ := record["description"].(string)
+	status, _ := record["status"].(string)
+	return &AgentProfile{
+		DID:         did,
+		Handle:      handle,
+		Name:        name,
+		Description: desc,
+		A2AEndpoint: endpoint,
+		Status:      status,
+		IndexedAt:   time.Now().UTC(),
+	}
 }
 
 // recordToSignal converts a raw CBOR-decoded record map to a Signal.

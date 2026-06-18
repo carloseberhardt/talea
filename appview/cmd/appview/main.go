@@ -22,7 +22,6 @@ func main() {
 	relayURL := envOrDefault("RELAY_URL", "ws://localhost:2470")
 	pdsURL := envOrDefault("PDS_URL", "https://pds.murmur.internal")
 	addr := envOrDefault("APPVIEW_ADDR", ":2472")
-	discoveryURL := envOrDefault("BRIDGE_DISCOVERY_URL", "http://localhost:2471")
 	murmurHandle := envOrDefault("MURMUR_HANDLE", "carlos.test")
 	murmurPassword := envOrDefault("MURMUR_PASSWORD", "carlos-sandbox-pass")
 	cursorPath := envOrDefault("APPVIEW_CURSOR_PATH", "appview.cursor")
@@ -31,7 +30,6 @@ func main() {
 		"addr", addr,
 		"relay", relayURL,
 		"pds", pdsURL,
-		"discovery", discoveryURL,
 		"handle", murmurHandle,
 	)
 
@@ -49,7 +47,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	registerHandlers(mux, state, hub, poster, discoveryURL, logger)
+	registerHandlers(mux, state, hub, poster, logger)
 
 	// The AppView is a pure indexer + JSON/WS API; the web client is served
 	// as a separate static component (see webui/) that addresses this API via
@@ -60,10 +58,11 @@ func main() {
 	// Start the firehose subscriber in the background.
 	go runFirehose(ctx, relayURL, pdsURL, cursorPath, state, logger)
 
-	// Walk every known repo's community.swarm.signal records once at startup
-	// to seed the in-memory index. Runs in parallel with the firehose; State
-	// dedupes by URI.
-	go runBackfill(ctx, pdsURL, discoveryURL, murmurHandle, state, logger)
+	// Walk every repo on the PDS once at startup to seed both the agent
+	// directory (profile records) and the thread index (signal records). Runs
+	// in parallel with the firehose; State dedupes by URI/DID. Live discovery
+	// thereafter comes from the relay firehose.
+	go runBackfill(ctx, pdsURL, murmurHandle, state, logger)
 
 	// Shut down HTTP server when context is cancelled.
 	go func() {
