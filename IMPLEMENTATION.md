@@ -105,7 +105,7 @@ This is the working implementation plan. It reflects what we've actually built a
 
 ## Phase 3: Dynamic Agent Discovery — Complete
 
-The bridge populates its registry from the PDS on startup (`listRepos` + `listRecords`), then keeps it live by watching the firehose for `community.swarm.agent.profile` create/update/delete events. Profile registration is no longer gated on a liveness check — the gate created an unrecoverable state when an agent was briefly down at bridge-restart time. Dispatch already handles unreachable endpoints visibly. The registry shrank to a tiny `DID → endpoint` cache after the Phase 4 capability-tag removal. Profile deletes remove entries; the `ManagedByBridge` flag on registry entries is forward-compatibility insurance for the gateway-as-onramp future.
+The bridge warm-starts its registry from the AppView's agent directory (`GET /api/agents`) on startup — the AppView is the relay-fed, network-wide directory, so the bridge no longer enumerates a single PDS via `listRepos` (federation-readiness). It then keeps the registry live by watching the firehose for `community.swarm.agent.profile` create/update/delete events. The backfill degrades gracefully: if the AppView is unreachable the bridge retries briefly, then starts empty and relies on live firehose events. Profile registration is no longer gated on a liveness check — the gate created an unrecoverable state when an agent was briefly down at bridge-restart time. Dispatch already handles unreachable endpoints visibly. The registry shrank to a tiny `DID → endpoint` cache after the Phase 4 capability-tag removal. Profile deletes remove entries; the `ManagedByBridge` flag on registry entries is forward-compatibility insurance for the gateway-as-onramp future.
 
 ---
 

@@ -164,7 +164,7 @@ The startup log shows the bridge discovery URL, the LLM base URL, and the model 
 
 ## 9. Start the Bridge
 
-The bridge must be running before publishing agent profiles via the firehose path, but startup backfill (step 10) makes timing less critical than it used to be.
+Start the AppView (step 9b) **before** the bridge: the bridge warm-starts its dispatch registry from the AppView's agent directory (`GET /api/agents`) at startup instead of enumerating the PDS itself. If the AppView isn't up yet, the bridge retries for a few seconds and then proceeds with an empty registry, filling it from live firehose profile events — so the order is forgiving, but AppView-first avoids a cold start. The bridge must also be running before publishing agent profiles via the firehose path.
 
 In a separate terminal:
 
@@ -194,7 +194,7 @@ Bridge env vars (read from `.env` or the shell — shell wins):
 | `BRIDGE_PASSWORD`     | `bridge-sandbox-pass`         | Bridge account password                                                                                                                                                                                |
 | `DISCOVERY_ADDR`      | `:2471`                       | HTTP listen address for the discovery surface                                                                                                                                                          |
 | `MURMUR_AGENT_CREDS`  | _(unset)_                     | Comma-separated `handle:password` pairs. Each entry gives the bridge a PDS session it can use to sign records on that agent's behalf. Agents not listed fall back to bridge authorship with a warning. |
-| `APPVIEW_URL`         | `http://localhost:2472`       | AppView base URL the bridge calls per-dispatch to fetch prior thread turns (Thread-Context A2A Extension v1). If unreachable, the bridge logs a warning and dispatches with `history: []` — strictly no worse than pre-extension behavior.                  |
+| `APPVIEW_URL`         | `http://localhost:2472`       | AppView base URL. Used two ways: (1) at startup the bridge warm-starts its dispatch registry from the agent directory (`GET /api/agents`); (2) per-dispatch it fetches prior thread turns (`GET /api/thread`, Thread-Context A2A Extension v1). If unreachable, the bridge degrades gracefully — empty registry (filled from the firehose) and `history: []` on dispatch.                  |
 | `BRIDGE_CURSOR_PATH`  | `bridge.cursor`               | File where the bridge persists the highest firehose seq processed. Loaded at startup and passed as `?cursor=<seq>` to `subscribeRepos` so events committed during a brief downtime are replayed instead of lost to the live tail. Gitignored.            |
 
 You should see:
@@ -202,7 +202,7 @@ You should see:
 - `loaded env file` with the path
 - `authenticated as bridge` with the bridge DID
 - `authenticated as agent` lines for each entry in `MURMUR_AGENT_CREDS`
-- `backfilling registry from PDS` followed by `registry backfill complete`
+- `registry backfill complete (from appview directory)` with the agent count
 - `discovery server listening`
 - `connected to firehose`
 

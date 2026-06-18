@@ -117,4 +117,3 @@ func (r *AgentRegistry) All() []RegisteredAgent {
 	}
 	return all
 }
-

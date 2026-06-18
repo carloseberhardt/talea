@@ -191,120 +191,93 @@ func main() {
 
 // --- Startup registry backfill ---
 
-// backfillRegistry queries the PDS for all existing agent profiles and seeds
-// the registry with them before the firehose subscription begins. This makes
-// bridge restarts safe: agents that registered while the bridge was down
-// don't need to re-publish their profiles to be discovered.
+// appviewAgent mirrors the AppView's /api/agents wire shape
+// (community.swarm.agent.profile). Only the fields the dispatch registry needs.
+type appviewAgent struct {
+	DID         string `json:"did"`
+	Handle      string `json:"handle"`
+	Name        string `json:"name"`
+	A2AEndpoint string `json:"a2aEndpoint"`
+}
+
+// backfillRegistry seeds the dispatch registry from the AppView's agent
+// directory before the firehose subscription begins, so agents that registered
+// while the bridge was down are dispatchable immediately on restart.
 //
-// The PDS is the source of truth for repo state; the firehose is for changes.
-// We treat backfill as authoritative for "what exists right now" and let the
-// firehose take over for live updates from the moment we connect.
+// The AppView is the canonical, relay-fed directory — it indexes agent profiles
+// across every PDS in the network, so querying it (rather than enumerating a
+// single PDS via listRepos) is what makes the bridge's discovery federation-
+// ready. The bridge keeps its own firehose-driven registry (handleAgentProfile)
+// as the live, hot-path dispatch cache; this backfill just warm-starts it.
+//
+// Graceful degradation: if the AppView is unreachable, we retry briefly (it may
+// still be coming up — startup order isn't guaranteed) and then give up,
+// starting with whatever we got and relying on live firehose profile events. A
+// successful-but-empty response is accepted as-is (the AppView's own backfill is
+// fast, so an empty directory means an empty swarm, not a race).
 func (b *Bridge) backfillRegistry(ctx context.Context) error {
-	dids, err := b.listAllRepos(ctx)
-	if err != nil {
-		return fmt.Errorf("listRepos failed: %w", err)
+	if b.appviewURL == "" {
+		return fmt.Errorf("no appview URL configured")
+	}
+	reqURL := strings.TrimRight(b.appviewURL, "/") + "/api/agents"
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	const maxAttempts = 8
+	var agents []appviewAgent
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Second):
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err // AppView not up yet — retry
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("appview /api/agents HTTP %d", resp.StatusCode)
+			continue
+		}
+		err = json.NewDecoder(resp.Body).Decode(&agents)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("decode /api/agents: %w", err)
+			continue
+		}
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
+		return lastErr
 	}
 
-	b.logger.Info("backfilling registry from PDS", "repos", len(dids))
-
 	var found int
-	for _, did := range dids {
-		if did == b.bridgeDID {
+	for _, a := range agents {
+		if a.DID == "" || a.A2AEndpoint == "" || a.DID == b.bridgeDID {
 			continue
 		}
-		record, err := b.fetchAgentProfile(ctx, did)
-		if err != nil {
-			b.logger.Warn("failed to fetch agent profile during backfill", "did", did, "error", err)
-			continue
-		}
-		if record == nil {
-			continue
-		}
-		b.handleAgentProfile(ctx, did, record)
+		b.registry.Upsert(RegisteredAgent{
+			DID:             a.DID,
+			Name:            a.Name,
+			Handle:          a.Handle,
+			A2AEndpoint:     a.A2AEndpoint,
+			ManagedByBridge: false, // self-published; bridge-minted profiles will set true
+		})
 		found++
 	}
 
-	b.logger.Info("registry backfill complete", "agents_loaded", found)
+	b.logger.Info("registry backfill complete (from appview directory)",
+		"agents_loaded", found, "appview", b.appviewURL)
 	return nil
-}
-
-// listAllRepos enumerates every DID hosted on the PDS, paginating via cursor.
-func (b *Bridge) listAllRepos(ctx context.Context) ([]string, error) {
-	var dids []string
-	cursor := ""
-	for {
-		u := fmt.Sprintf("%s/xrpc/com.atproto.sync.listRepos?limit=500", b.pdsURL)
-		if cursor != "" {
-			u += "&cursor=" + url.QueryEscape(cursor)
-		}
-
-		req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-
-		var page struct {
-			Cursor string `json:"cursor"`
-			Repos  []struct {
-				DID string `json:"did"`
-			} `json:"repos"`
-		}
-		err = json.NewDecoder(resp.Body).Decode(&page)
-		resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("decode listRepos response: %w", err)
-		}
-
-		for _, r := range page.Repos {
-			dids = append(dids, r.DID)
-		}
-
-		if page.Cursor == "" || len(page.Repos) == 0 {
-			break
-		}
-		cursor = page.Cursor
-	}
-	return dids, nil
-}
-
-// fetchAgentProfile returns the community.swarm.agent.profile record for a DID,
-// or nil if the repo has no profile of that collection.
-func (b *Bridge) fetchAgentProfile(ctx context.Context, did string) (map[string]any, error) {
-	u := fmt.Sprintf("%s/xrpc/com.atproto.repo.listRecords?repo=%s&collection=%s&limit=1",
-		b.pdsURL, url.QueryEscape(did), profileCollection)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		// 400 here typically means "no records of that collection in this repo" — not an error.
-		return nil, nil
-	}
-
-	var result struct {
-		Records []struct {
-			Value map[string]any `json:"value"`
-		} `json:"records"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode listRecords response: %w", err)
-	}
-
-	if len(result.Records) == 0 {
-		return nil, nil
-	}
-	return result.Records[0].Value, nil
 }
 
 // --- Firehose consumption ---
