@@ -22,6 +22,7 @@ func main() {
 	relayURL := envOrDefault("RELAY_URL", "ws://localhost:2470")
 	pdsURL := envOrDefault("PDS_URL", "https://pds.murmur.internal")
 	addr := envOrDefault("APPVIEW_ADDR", ":2472")
+	plcURL := envOrDefault("PLC_URL", "http://localhost:2582")
 	murmurHandle := envOrDefault("MURMUR_HANDLE", "carlos.test")
 	murmurPassword := envOrDefault("MURMUR_PASSWORD", "carlos-sandbox-pass")
 	cursorPath := envOrDefault("APPVIEW_CURSOR_PATH", "appview.cursor")
@@ -41,6 +42,11 @@ func main() {
 
 	state := NewState(hub)
 
+	// Resolver maps any DID to its hosting PDS (did:plc via PLC_URL, did:web via
+	// HTTPS), falling back to the local PDS. Federation-ready: handle resolution
+	// follows each DID to its real PDS instead of assuming the local one.
+	resolver := NewResolver(plcURL, pdsURL, logger)
+
 	poster := NewPoster(pdsURL, murmurHandle, murmurPassword, logger)
 	if err := poster.Authenticate(ctx); err != nil {
 		logger.Warn("PDS authentication failed — posting will be unavailable", "error", err)
@@ -56,7 +62,7 @@ func main() {
 	srv := &http.Server{Addr: addr, Handler: mux}
 
 	// Start the firehose subscriber in the background.
-	go runFirehose(ctx, relayURL, pdsURL, cursorPath, state, logger)
+	go runFirehose(ctx, relayURL, cursorPath, state, resolver, logger)
 
 	// Walk every repo on the PDS once at startup to seed both the agent
 	// directory (profile records) and the thread index (signal records). Runs

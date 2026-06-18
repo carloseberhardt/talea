@@ -107,7 +107,7 @@ func (b *Bridge) fetchThreadHistory(ctx context.Context, rootURI, excludeSignalU
 		entries = append(entries, historyEntry{
 			SignalURI:    s.URI,
 			SignalCID:    s.CID,
-			HttpURL:      b.signalHttpURL(s.URI),
+			HttpURL:      b.signalHttpURL(ctx, s.URI),
 			AuthorDID:    s.AuthorDID,
 			AuthorHandle: s.AuthorHandle,
 			Type:         s.Type,
@@ -123,17 +123,19 @@ func (b *Bridge) fetchThreadHistory(ctx context.Context, rootURI, excludeSignalU
 	return entries
 }
 
-// signalHttpURL builds a PDS XRPC getRecord URL for a signal at-URI.
-// TODO: real DID→PDS resolution. v1 assumes every DID lives on b.pdsURL,
-// which holds in the current sandbox but breaks once users can migrate.
-func (b *Bridge) signalHttpURL(atURI string) string {
+// signalHttpURL builds a PDS XRPC getRecord URL for a signal at-URI, resolving
+// the authoring DID to its hosting PDS (did:plc/did:web) so the link is correct
+// even when the author lives on a different PDS. Falls back to the local PDS if
+// resolution fails.
+func (b *Bridge) signalHttpURL(ctx context.Context, atURI string) string {
 	parts := strings.SplitN(strings.TrimPrefix(atURI, "at://"), "/", 3)
 	if len(parts) != 3 {
 		return ""
 	}
 	did, collection, rkey := parts[0], parts[1], parts[2]
+	pds := b.resolver.PDSForDID(ctx, did)
 	return fmt.Sprintf("%s/xrpc/com.atproto.repo.getRecord?repo=%s&collection=%s&rkey=%s",
-		b.pdsURL, url.QueryEscape(did), collection, rkey)
+		pds, url.QueryEscape(did), collection, rkey)
 }
 
 // applyTruncation caps total content bytes across a history slice. If the

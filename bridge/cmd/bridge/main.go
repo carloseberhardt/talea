@@ -37,6 +37,7 @@ type Bridge struct {
 	appviewURL string
 	bridgeDID  string
 	registry   *AgentRegistry
+	resolver   *Resolver
 
 	// The base URL of the discovery/publish server (e.g., "http://localhost:2471").
 	// Passed to agents in thread context so they can call POST /publish.
@@ -89,6 +90,7 @@ func main() {
 	relayURL := envOrDefault("RELAY_URL", "ws://localhost:2470")
 	pdsURL := envOrDefault("PDS_URL", "https://pds.murmur.internal")
 	appviewURL := envOrDefault("APPVIEW_URL", "http://localhost:2472")
+	plcURL := envOrDefault("PLC_URL", "http://localhost:2582")
 	bridgeHandle := envOrDefault("BRIDGE_HANDLE", "bridge.test")
 	bridgePassword := envOrDefault("BRIDGE_PASSWORD", "bridge-sandbox-pass")
 	discoveryAddr := envOrDefault("DISCOVERY_ADDR", ":2471")
@@ -103,6 +105,7 @@ func main() {
 		pdsURL:         pdsURL,
 		appviewURL:     appviewURL,
 		registry:       registry,
+		resolver:       NewResolver(plcURL, pdsURL, logger),
 		handle:         bridgeHandle,
 		password:       bridgePassword,
 		sessions:       make(map[string]*agentSession),
@@ -576,10 +579,10 @@ func (b *Bridge) handleSignal(ctx context.Context, did string, rkey string, cid 
 		tc := &threadContext{
 			SignalURI:     dispatchParentURI,
 			SignalCID:     dispatchParentCID,
-			SignalHttpURL: b.signalHttpURL(dispatchParentURI),
+			SignalHttpURL: b.signalHttpURL(ctx, dispatchParentURI),
 			RootURI:       rootURI,
 			RootCID:       rootCID,
-			RootHttpURL:   b.signalHttpURL(rootURI),
+			RootHttpURL:   b.signalHttpURL(ctx, rootURI),
 			PublishURL:    b.publishBaseURL + "/publish",
 			RecipientDID:  agent.DID,
 			History:       history,
@@ -697,8 +700,9 @@ func (b *Bridge) getRecord(ctx context.Context, uri string) (map[string]any, err
 	}
 	did, collection, rkey := parts[0], parts[1], parts[2]
 
+	pds := b.resolver.PDSForDID(ctx, did)
 	u := fmt.Sprintf("%s/xrpc/com.atproto.repo.getRecord?repo=%s&collection=%s&rkey=%s",
-		b.pdsURL, url.QueryEscape(did), collection, rkey)
+		pds, url.QueryEscape(did), collection, rkey)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
@@ -983,9 +987,11 @@ func (b *Bridge) publishReplySignal(ctx context.Context, asHandle, parentURI, pa
 
 // --- Handle resolution ---
 
-// resolveHandle resolves a DID to its atproto handle via the PDS.
+// resolveHandle resolves a DID to its atproto handle via that DID's hosting PDS
+// (resolved from the DID, so it works for agents on any PDS, not just b.pdsURL).
 func (b *Bridge) resolveHandle(ctx context.Context, did string) string {
-	url := fmt.Sprintf("%s/xrpc/com.atproto.repo.describeRepo?repo=%s", b.pdsURL, did)
+	pds := b.resolver.PDSForDID(ctx, did)
+	url := fmt.Sprintf("%s/xrpc/com.atproto.repo.describeRepo?repo=%s", pds, did)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		b.logger.Warn("failed to build handle resolution request", "did", did, "error", err)

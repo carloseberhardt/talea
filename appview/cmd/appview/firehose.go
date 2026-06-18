@@ -30,7 +30,7 @@ const (
 // state. It retries with a 5 s backoff on connection failures. It returns only
 // when ctx is cancelled. The cursor at cursorPath persists the highest seq
 // processed; restarts resume from there instead of the live tail.
-func runFirehose(ctx context.Context, relayURL, pdsURL, cursorPath string, state *State, logger *slog.Logger) {
+func runFirehose(ctx context.Context, relayURL, cursorPath string, state *State, resolver *Resolver, logger *slog.Logger) {
 	u, err := url.Parse(relayURL)
 	if err != nil {
 		logger.Error("invalid relay URL", "error", err)
@@ -56,7 +56,7 @@ func runFirehose(ctx context.Context, relayURL, pdsURL, cursorPath string, state
 
 	rsc := &events.RepoStreamCallbacks{
 		RepoCommit: func(evt *comatproto.SyncSubscribeRepos_Commit) error {
-			err := handleCommit(ctx, evt, pdsURL, state, handleCache, logger)
+			err := handleCommit(ctx, evt, resolver, state, handleCache, logger)
 			// Advance cursor regardless of per-event success — we just need to
 			// remember "we got past this seq" so reconnects don't replay from
 			// before it.
@@ -116,7 +116,7 @@ func runFirehose(ctx context.Context, relayURL, pdsURL, cursorPath string, state
 func handleCommit(
 	ctx context.Context,
 	evt *comatproto.SyncSubscribeRepos_Commit,
-	pdsURL string,
+	resolver *Resolver,
 	state *State,
 	handleCache *sync.Map,
 	logger *slog.Logger,
@@ -165,7 +165,7 @@ func handleCommit(
 			continue
 		}
 
-		handle := resolveHandle(ctx, evt.Repo, pdsURL, handleCache, logger)
+		handle := resolveHandle(ctx, evt.Repo, resolver, handleCache, logger)
 
 		switch colStr {
 		case signalCollection:
@@ -285,13 +285,15 @@ func recordToSignal(record map[string]any, uri, cid, authorDID, authorHandle str
 }
 
 // resolveHandle returns the handle for a DID, using a cache and falling back
-// to the DID itself if the PDS lookup fails.
-func resolveHandle(ctx context.Context, did, pdsURL string, cache *sync.Map, logger *slog.Logger) string {
+// to the DID itself if the lookup fails. The DID is first resolved to its
+// hosting PDS (federation-aware), then that PDS's describeRepo gives the handle.
+func resolveHandle(ctx context.Context, did string, resolver *Resolver, cache *sync.Map, logger *slog.Logger) string {
 	if v, ok := cache.Load(did); ok {
 		return v.(string)
 	}
 
-	handle := fetchHandle(ctx, did, pdsURL, logger)
+	pds := resolver.PDSForDID(ctx, did)
+	handle := fetchHandle(ctx, did, pds, logger)
 	cache.Store(did, handle)
 	return handle
 }
