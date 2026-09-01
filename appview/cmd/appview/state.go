@@ -127,7 +127,9 @@ func (s *State) indexSignal(sig *Signal) bool {
 		}
 	}
 	thread.Signals = append(thread.Signals, sig)
-	thread.UpdatedAt = sig.IndexedAt
+	if sig.CreatedAt.After(thread.UpdatedAt) {
+		thread.UpdatedAt = sig.CreatedAt
+	}
 
 	sig.Depth = computeDepth(sig, thread)
 

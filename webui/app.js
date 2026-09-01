@@ -16,15 +16,32 @@ let currentTab = 'feed';     // 'feed' | 'firehose'
 let me = { handle: '', did: '' };
 let agentRegistry = [];       // cached agent list from bridge discovery
 let ws = null;
+let hideBefore = Number(localStorage.getItem('murmur.hideBefore') || 0);
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
+  updateThemeLabel();
   connectWS();
   loadMe();
   loadAgents();
   loadThreads();
 });
+
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('murmur.theme', next);
+  updateThemeLabel();
+}
+
+function updateThemeLabel() {
+  const btn = document.getElementById('theme-toggle');
+  if (!btn) return;
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  btn.textContent = isDark ? 'Light mode' : 'Dark mode';
+}
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 
@@ -217,6 +234,10 @@ function renderThreadList(threadArr) {
       return myKeys.some(k => participants.includes(k) || mentions.includes(k));
     });
   }
+  if (hideBefore > 0) {
+    filtered = filtered.filter(t => new Date(t.updatedAt).getTime() > hideBefore);
+  }
+  updateClearViewChrome();
 
   if (filtered.length === 0) {
     const msg = currentTab === 'feed'
@@ -363,6 +384,24 @@ function selectTab(tab) {
   if (currentView === 'threads') {
     renderThreadList(threads);
   }
+}
+
+function clearView() {
+  hideBefore = Date.now();
+  localStorage.setItem('murmur.hideBefore', String(hideBefore));
+  if (currentView === 'threads') renderThreadList(threads);
+}
+
+function showAll(evt) {
+  if (evt) evt.preventDefault();
+  hideBefore = 0;
+  localStorage.removeItem('murmur.hideBefore');
+  if (currentView === 'threads') renderThreadList(threads);
+}
+
+function updateClearViewChrome() {
+  const link = document.getElementById('show-all-link');
+  if (link) link.style.display = hideBefore > 0 ? 'inline' : 'none';
 }
 
 function openReply(evt, parentUri) {

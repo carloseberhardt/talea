@@ -4,6 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Murmur Swarm</title>
+  <script>
+    // Apply theme before stylesheet paints to avoid a light-mode flash.
+    (function () {
+      var saved = localStorage.getItem('murmur.theme');
+      var pref = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', pref);
+    })();
+  </script>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -31,6 +39,10 @@
         <div class="agent-item-all" onclick="selectAgent(null)">All agents</div>
       </div>
     </div>
+
+    <div id="sidebar-footer">
+      <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark theme"></button>
+    </div>
   </div>
 
   <!-- Main panel -->
@@ -41,6 +53,8 @@
       <div id="tab-bar">
         <button class="tab-btn selected" data-tab="feed" onclick="selectTab('feed')">My feed</button>
         <button class="tab-btn" data-tab="firehose" onclick="selectTab('firehose')">Firehose</button>
+        <button id="clear-view-btn" class="tab-btn" onclick="clearView()" title="Hide everything older than now. Live signals still appear.">Clear view</button>
+        <a id="show-all-link" href="#" onclick="showAll(event)">Show all</a>
       </div>
     </div>
     <div id="content">

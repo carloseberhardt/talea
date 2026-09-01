@@ -8,3 +8,4 @@ bridge/bridge
 certs/
 appview/appview
 *.cursor
+.claude/settings.local.json

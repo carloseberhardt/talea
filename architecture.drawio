@@ -1,0 +1,237 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram name="Murmur architecture" id="murmur-arch">
+    <mxGraphModel dx="1600" dy="1060" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="1060" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- ===== Group labels ===== -->
+        <mxCell id="h-operator" value="Operator" style="text;html=1;align=center;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="200" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="h-user" value="End user" style="text;html=1;align=center;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="20" y="200" width="200" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="h-atproto" value="atproto core   ────────  (the bus)" style="text;html=1;align=center;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="260" y="20" width="820" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="h-murmur" value="Murmur services   ────────  (firehose subscribers + record writers)" style="text;html=1;align=center;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="260" y="320" width="820" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="h-agents" value="Domain agents   ────────  (atproto-naive — speak only A2A)" style="text;html=1;align=center;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="320" y="620" width="480" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="h-llm" value="LLM" style="text;html=1;align=center;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="860" y="620" width="300" height="20" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== Operator + End user ===== -->
+        <mxCell id="cli" value="&lt;b&gt;murmur CLI&lt;/b&gt;&lt;br&gt;bootstrap + demo + debug&lt;br&gt;&lt;i&gt;publish-profile, post,&lt;br&gt;reply, thread, agents&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;align=center;" vertex="1" parent="1">
+          <mxGeometry x="20" y="50" width="200" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="carlos" value="👤 Carlos&#xa;(carlos.test)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="230" width="160" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== atproto core ===== -->
+        <mxCell id="caddy" value="&lt;b&gt;Caddy&lt;/b&gt;&lt;br&gt;TLS termination" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="280" y="60" width="140" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="pds" value="&lt;b&gt;PDS&lt;/b&gt;&lt;br&gt;account repos&lt;br&gt;(signed commits)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="460" y="60" width="160" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="relay" value="&lt;b&gt;Relay&lt;/b&gt;&lt;br&gt;firehose aggregator&lt;br&gt;&lt;i&gt;(subscribeRepos)&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="660" y="60" width="160" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="plc" value="&lt;b&gt;PLC&lt;/b&gt;&lt;br&gt;DID directory" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="460" y="200" width="100" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="postgres" value="Postgres" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="600" y="200" width="80" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="note-pds" value="* PDS shown singular for the sandbox. Reads are DID-resolved&#xa;  (did:plc via PLC, did:web via HTTPS) so multi-PDS / federation&#xa;  works without code changes — see flow.md." style="text;html=1;align=left;fontSize=9;fontColor=#888888;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="460" y="258" width="500" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="note-relay" value="* relay: stock indigo + 1-line SSRF patch for local sandbox" style="text;html=1;align=left;fontSize=9;fontColor=#888888;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="660" y="148" width="360" height="14" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== Murmur services ===== -->
+        <mxCell id="webui" value="&lt;b&gt;Web UI&lt;/b&gt; &lt;i&gt;(static client app)&lt;/i&gt;&lt;br&gt;• plain HTML/JS in &lt;tt&gt;webui/&lt;/tt&gt;&lt;br&gt;• served by any static host&lt;br&gt;• calls only the AppView API + WS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;spacingLeft=10;fontSize=11;verticalAlign=top;spacingTop=6;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="280" y="360" width="240" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="appview" value="&lt;b&gt;AppView&lt;/b&gt; &lt;i&gt;(indexer + directory)&lt;/i&gt;&lt;br&gt;• firehose subscriber + thread index&lt;br&gt;• agent directory  &lt;tt&gt;/api/agents&lt;/tt&gt;&lt;br&gt;• thread context  &lt;tt&gt;/api/thread&lt;/tt&gt;&lt;br&gt;• post / reply API  → signs as carlos&lt;br&gt;• DID→PDS resolver (multi-PDS)&lt;br&gt;• WS firehose to browsers" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;spacingLeft=10;fontSize=11;verticalAlign=top;spacingTop=6;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="280" y="450" width="240" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="bridge" value="&lt;b&gt;Bridge&lt;/b&gt;&lt;br&gt;• firehose subscriber&lt;br&gt;• A2A dispatcher → agents&lt;br&gt;• signs result records&lt;br&gt;  on agents' behalf&lt;br&gt;• warm-starts dispatch cache&lt;br&gt;  from AppView /api/agents&lt;br&gt;• DID→PDS resolver" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;spacingLeft=10;fontSize=11;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="580" y="360" width="240" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="triage" value="&lt;b&gt;Triage agent&lt;/b&gt;&lt;br&gt;&lt;i&gt;swarm-native&lt;/i&gt;&lt;br&gt;&lt;br&gt;• firehose subscriber&lt;br&gt;• routes untagged signals&lt;br&gt;• publishes routing signal&lt;br&gt;  directly (no Bridge)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;spacingLeft=10;fontSize=11;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="880" y="360" width="240" height="150" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== Domain agents ===== -->
+        <mxCell id="agents" value="&lt;b&gt;Domain agents&lt;/b&gt; — Python A2A SDK 1.0&lt;br&gt;&lt;br&gt;• delivery (agent-one.test)&lt;br&gt;• weather (weather-one.test)&lt;br&gt;• orchestrator (general fallback)&lt;br&gt;• threeaday (CBT coach)&lt;br&gt;&lt;br&gt;Receive thread context from the Bridge via the&lt;br&gt;Thread-Context A2A Extension v1." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacingLeft=10;fontSize=11;verticalAlign=top;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="320" y="650" width="480" height="170" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== LLM ===== -->
+        <mxCell id="gw" value="&lt;b&gt;AgentGateway&lt;/b&gt;&lt;br&gt;LLM-aware HTTP proxy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="860" y="650" width="140" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="watsonx" value="&lt;b&gt;WatsonX&lt;/b&gt;&lt;br&gt;gpt-oss-120b" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="650" width="140" height="80" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== Edges ===== -->
+
+        <!-- Carlos uses Web UI -->
+        <mxCell id="e-carlos-webui" value="browser → web UI" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="carlos" target="webui" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Web UI ↔ AppView (read API + post API) -->
+        <mxCell id="e-webui-appview" value="HTTP + WS&#xa;(feed, thread, post, reply)" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;fontSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=1;" edge="1" source="webui" target="appview" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- CLI writes / reads -->
+        <mxCell id="e-cli-caddy-w" value="createRecord / putRecord" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#1A73E8;fontColor=#1A73E8;fontSize=10;exitX=1;exitY=0.4;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="cli" target="caddy" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-cli-caddy-r" value="listRepos / listRecords" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#1A73E8;fontColor=#1A73E8;fontSize=10;dashed=1;exitX=1;exitY=0.7;exitDx=0;exitDy=0;entryX=0;entryY=0.8;entryDx=0;entryDy=0;" edge="1" source="cli" target="caddy" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- AppView posts on behalf of Carlos (Poster signs createRecord) -->
+        <mxCell id="e-appview-caddy" value="posts as carlos&#xa;(AppView.Poster)" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#1A73E8;fontColor=#1A73E8;fontSize=10;exitX=0.1;exitY=0;exitDx=0;exitDy=0;entryX=0.35;entryY=1;entryDx=0;entryDy=0;" edge="1" source="appview" target="caddy" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Bridge writes result signals -->
+        <mxCell id="e-bridge-caddy" value="result signal (signed as agent)" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#1A73E8;fontColor=#1A73E8;fontSize=10;exitX=0.2;exitY=0;exitDx=0;exitDy=0;entryX=0.7;entryY=1;entryDx=0;entryDy=0;" edge="1" source="bridge" target="caddy" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Triage writes routing signals -->
+        <mxCell id="e-triage-caddy" value="routing signal (signs as triage)" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#1A73E8;fontColor=#1A73E8;fontSize=10;exitX=0.2;exitY=0;exitDx=0;exitDy=0;entryX=0.95;entryY=1;entryDx=0;entryDy=0;" edge="1" source="triage" target="caddy" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- atproto bus -->
+        <mxCell id="e-caddy-pds" value="HTTPS" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="caddy" target="pds" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-pds-relay" value="firehose feed" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#D79B00;fontColor=#D79B00;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="pds" target="relay" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- PDS ↔ PLC -->
+        <mxCell id="e-pds-plc" value="DID lookup" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;dashed=1;fontSize=10;exitX=0.3;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="pds" target="plc" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-plc-pg" value="" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;dashed=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="plc" target="postgres" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Relay → subscribers (firehose) -->
+        <mxCell id="e-relay-appview" value="subscribeRepos" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#D79B00;fontColor=#D79B00;dashed=1;fontSize=10;exitX=0.2;exitY=1;exitDx=0;exitDy=0;entryX=0.95;entryY=0;entryDx=0;entryDy=0;" edge="1" source="relay" target="appview" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-relay-bridge" value="subscribeRepos" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#D79B00;fontColor=#D79B00;dashed=1;fontSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="relay" target="bridge" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-relay-triage" value="subscribeRepos" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#D79B00;fontColor=#D79B00;dashed=1;fontSize=10;exitX=0.85;exitY=1;exitDx=0;exitDy=0;entryX=0.2;entryY=0;entryDx=0;entryDy=0;" edge="1" source="relay" target="triage" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Bridge → AppView API: prior turns + directory fetch -->
+        <mxCell id="e-bridge-appview-thread" value="prior turns&#xa;(load-bearing for multi-turn)" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;dashed=1;fontSize=10;exitX=0;exitY=0.3;exitDx=0;exitDy=0;entryX=1;entryY=0.3;entryDx=0;entryDy=0;" edge="1" source="bridge" target="appview" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-bridge-appview-dir" value="/api/agents&#xa;(directory warm-start)" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;dashed=1;fontSize=10;exitX=0;exitY=0.7;exitDx=0;exitDy=0;entryX=1;entryY=0.7;entryDx=0;entryDy=0;" edge="1" source="bridge" target="appview" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Bridge → Agents (A2A) -->
+        <mxCell id="e-bridge-agents" value="A2A SendMessage&#xa;(HTTP JSON-RPC)" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#82B366;fontColor=#82B366;fontSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.7;entryY=0;entryDx=0;entryDy=0;" edge="1" source="bridge" target="agents" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- LLM edges -->
+        <mxCell id="e-agents-gw" value="LLM inference" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#9673A6;fontColor=#9673A6;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="agents" target="gw" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-triage-gw" value="LLM inference" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#9673A6;fontColor=#9673A6;fontSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="triage" target="gw" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-gw-watsonx" value="" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeColor=#9673A6;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="gw" target="watsonx" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== Legend ===== -->
+        <mxCell id="legend-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;" vertex="1" parent="1">
+          <mxGeometry x="40" y="840" width="1120" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend-title" value="Legend" style="text;html=1;align=left;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="60" y="850" width="200" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="leg-write-line" value="" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#1A73E8;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="60" y="890" as="sourcePoint"/>
+            <mxPoint x="140" y="890" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg-write" value="record write (HTTPS to PDS — signed by the author DID)" style="text;html=1;align=left;fontColor=#1A73E8;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="150" y="880" width="500" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="leg-fh-line" value="" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#D79B00;dashed=1;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="60" y="920" as="sourcePoint"/>
+            <mxPoint x="140" y="920" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg-fh" value="firehose subscription (WSS — the system bus)" style="text;html=1;align=left;fontColor=#D79B00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="150" y="910" width="500" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="leg-a2a-line" value="" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82B366;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="60" y="950" as="sourcePoint"/>
+            <mxPoint x="140" y="950" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg-a2a" value="A2A dispatch (HTTP JSON-RPC — the only non-firehose hop)" style="text;html=1;align=left;fontColor=#82B366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="150" y="940" width="500" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="leg-llm-line" value="" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9673A6;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="60" y="980" as="sourcePoint"/>
+            <mxPoint x="140" y="980" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg-llm" value="LLM inference (HTTPS via gateway)" style="text;html=1;align=left;fontColor=#9673A6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="150" y="970" width="500" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="leg-llm-dashed-line" value="" style="endArrow=classic;edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#666666;dashed=1;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="60" y="1010" as="sourcePoint"/>
+            <mxPoint x="140" y="1010" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg-api" value="internal HTTP API (AppView's read/post API, used by Web UI and Bridge)" style="text;html=1;align=left;fontColor=#666666;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="150" y="1000" width="700" height="20" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="leg-note" value="&lt;b&gt;The shape.&lt;/b&gt; Every signal lives as an atproto record. Writers commit to the PDS (top); the relay broadcasts the firehose; subscribers (AppView, Bridge, Triage) react. The only out-of-band hop is the Bridge calling agents over A2A — the agents return results, and the Bridge signs them back into PDS using credentials it holds for each agent.&lt;br&gt;&lt;br&gt;&lt;b&gt;atproto-aware vs atproto-naive.&lt;/b&gt; AppView, Bridge, Triage (and the operator CLI) all speak atproto directly. Domain agents do not — they receive thread context from the Bridge via the Thread-Context A2A extension and return plain A2A responses.&lt;br&gt;&lt;br&gt;&lt;b&gt;Pace-layering.&lt;/b&gt; Web UI is a static client app, deployable independently of the AppView. The AppView is the load-bearing tier (Bridge depends on its &lt;tt&gt;/api/thread&lt;/tt&gt; and &lt;tt&gt;/api/agents&lt;/tt&gt;), so UI churn never touches a service consumer.&lt;br&gt;&lt;br&gt;&lt;b&gt;Federation-ready.&lt;/b&gt; Both Bridge and AppView resolve every DID to its hosting PDS (did:plc via PLC, did:web via HTTPS). The diagram shows one PDS because the sandbox runs one — the code does not assume it." style="text;html=1;align=left;whiteSpace=wrap;fontSize=11;spacingLeft=10;spacingRight=10;spacingTop=5;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="660" y="850" width="490" height="180" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
