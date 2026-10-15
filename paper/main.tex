@@ -1,0 +1,88 @@
+\documentclass[10pt]{article}
+
+\usepackage{arxiv}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{mathptmx}
+\usepackage[scaled=0.92]{helvet}
+\usepackage{courier}
+\usepackage{amsmath,amssymb}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc,shapes.geometric}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{xurl}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\usepackage[capitalise,noabbrev]{cleveref}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+\usepackage[smartEllipses]{markdown}
+\setlist{itemsep=2pt,topsep=3pt,parsep=0pt}
+\renewcommand{\arraystretch}{1.15}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+\newcommand{\nsid}[1]{\texttt{#1}}
+\newcommand{\atp}{atproto}
+\newcommand{\Atp}{Atproto}
+\newcommand{\inh}{\textsc{inherited}}
+\newcommand{\ext}{\textsc{extended}}
+\newcommand{\add}{\textsc{added}}
+\newcommand{\opn}{\textsc{open}}
+
+\definecolor{inherit}{RGB}{218,232,252}
+\definecolor{added}{RGB}{255,236,204}
+\definecolor{edgegray}{RGB}{110,110,110}
+\definecolor{kwblue}{RGB}{0,70,140}
+\definecolor{strgreen}{RGB}{30,110,50}
+
+\lstdefinelanguage{json}{
+  morestring=[b]",
+  stringstyle=\color{strgreen},
+  literate=
+    {:}{{{\color{kwblue}{:}}}}{1}
+    {,}{{{\color{kwblue}{,}}}}{1}
+    {\{}{{{\color{kwblue}{\{}}}}{1}
+    {\}}{{{\color{kwblue}{\}}}}}{1}
+    {[}{{{\color{kwblue}{[}}}}{1}
+    {]}{{{\color{kwblue}{]}}}}{1},
+}
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{black!30},
+  framesep=4pt,
+  xleftmargin=6pt,
+  xrightmargin=6pt,
+  breaklines=true,
+  showstringspaces=false,
+  aboveskip=6pt,
+  belowskip=4pt
+}
+
+% --------------------------------------------------------------------------
+\title{Murmur: Agent-to-Business Commerce\\ on the AT Protocol}
+
+\renewcommand{\shorttitle}{Murmur: Agent-to-Business Commerce on atproto}
+\renewcommand{\undertitle}{A Preprint}
+
+
+\begin{document}
+\maketitle
+\begin{abstract}
+\markdownInput{abstract.md}
+
+\end{abstract}
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}
