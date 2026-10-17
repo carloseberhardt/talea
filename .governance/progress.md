@@ -1,5 +1,12 @@
 # Progress
 
+## 2026-10-17 — Promote paper V4 to paper/
+
+- Status: done (commit `e2bb265` on `main`, not pushed)
+- Ignored `paper/V2/`, `paper/v3/`, `paper/V3/` and LaTeX intermediates.
+- Moved former `paper/V4/*` to `paper/` (sources, figures, `main_v4.pdf`).
+- Updated governance paths to `paper/`.
+
 ## 2026-10-17 — Table 1 / Figure 1 gap
 
 - Status: done
