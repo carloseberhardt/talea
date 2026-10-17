@@ -1,0 +1,62 @@
+Plan for the next section
+\section{Murmur coordination}
+\label{sec:coordination}
+
+Purpose and central claim
+Explain how the existing sandbox turns an agent workflow into linked, attributable records while A2A services execute tasks. Make the implemented mechanism understandable before introducing the proposed commercial rules. Do not repeat the Background's protocol survey, six requirements or ATProto primer.
+
+Recommended length
+About 1,200–1,500 words, one architecture diagram and one compact evidence/status table. The optional runtime integration should occupy no more than one short subsection. No performance graph without reproduced measurements.
+
+1. Record model and components (about 250 words)
+Describe signal, agent profile and endorsement records. Connect each component to its operation: PDS hosts records; relay distributes events; AppView indexes profiles and threads; bridge dispatches A2A tasks and publishes responses; triage selects a recipient; orchestrator manages dependent subtasks. Humans use CLI/web clients.
+Evidence anchors: lexicons/; bridge/; appview/; webui/; cli/; writeup/04-what-we-built.md.
+Describe endorsements as assertions, not proof of competence or corporate authority.
+
+Figure 1 specification
+Solid arrows for the existing path: participant -> PDS -> relay -> AppView/bridge/triage; bridge -> A2A agent -> bridge publication -> PDS. Show AppView supplying directory and context. Mark bridge-held credentials as a trust boundary. Put the optional Substrate adapter/router/actor below A2A execution in a dashed box labelled proposed. Do not draw the commercial gateway as implemented.
+
+2. Dispatch and published delegation (about 250 words)
+Walk the package-and-weather request in order: unaddressed request; triage routing record; bridge task to orchestrator; delivery sub-request; location result; weather sub-request; final synthesis. Show which record references which previous record and which account publishes it. Explain that bridge routing uses addressing and correlation, while agents interpret content.
+Evidence anchors: bridge/cmd/bridge/main.go, handleSignal at line 412 in the inspected checkout; bridge/cmd/bridge/publish.go, handlePublish at line 52; writeup/04-what-we-built.md. Recheck positions before final drafting.
+Avoid saying no private API calls occur; A2A and internal APIs still carry execution. The claim concerns publication of the specified coordination events.
+
+3. Conversation context and recovery (about 200 words)
+Explain one task per turn and thread-context/v1. State the documented weather-agent restart exercise as an author-reported observation, not a new benchmark. Read thread_history.go for ordering, filtering, missing-history behaviour and limits before writing guarantees. An incomplete index can produce incomplete context. Neither actor memory nor an AppView cursor substitutes for retained records, resource ledgers or duplicate-effect control.
+Evidence anchors: bridge/cmd/bridge/thread_history.go; writeup/04-what-we-built.md; writeup/08-where-this-points.md.
+
+Optional mathematical representation
+Use only if it makes dependency reconstruction clearer:
+G_T=(V_T,E_T), where V_T is the retained records for thread T and (r_i,r_j) belongs to E_T when r_j explicitly references r_i.
+Define the context supplied to an agent as a policy-filtered, available subset of V_T. Distinguish this abstract relation from the precise implementation. Edges identify declared dependencies; they do not prove full causality, completeness or global ordering.
+
+Optional Algorithm 1
+Specify the existing dispatch sequence only after checking code: consume event; resolve supported signal; apply actual addressing rules; obtain available authorised history; issue A2A task; publish correlated response. Mark proposed caller authorisation and durable duplicate suppression separately. Do not silently write an improved algorithm and label it implemented.
+
+4. Identity and publication boundary (about 150 words)
+Explain bridge custody of agent credentials and the difference between record attribution and authorisation of the caller requesting publication. Check the actual fallback behaviour. The commercial extension must bind caller identity to a permitted signing account, reject unintended identity fallback and enforce action policy. Do not claim that the current handler provides these controls merely because it has a valid session.
+
+5. Optional execution on Agent Substrate (about 200 words)
+Introduce an explicitly proposed adapter between the bridge's A2A dispatch and a Substrate-hosted A2A service. The documentation describes target routing via ate-target-actor (<atespace>/<actor>) and actor resumption. Use an authenticated mapping from Murmur identity to actor, rather than trusting caller-selected routing metadata.
+Proposed path: Murmur thread -> bridge -> adapter -> Substrate ingress -> A2A actor -> response -> bridge publication.
+Resolve endpoint discovery, caller authorisation, timeouts, streaming/task status, cancellation and retries. Snapshot restoration can return an agent to older local state after an external action. Keep signing, resource accounting and operation identifiers outside rollback-prone snapshots; reconcile on resume. This is an integration design, not a demonstrated property of either combined system.
+The documentation describes network policy at WorkerPool scope. Planner/emissary isolation may therefore require appropriately separated pools and explicit policies; do not assume per-actor routing supplies information-flow security. An authorised message can still leak a secret.
+
+6. Evidence and boundary (about 150 words)
+Table columns: capability, observed or specified status, evidence, untested condition.
+Rows: published routing and A2A execution; thread reconstruction/restart; bridge identity handling; independent organisation deployment; commercial controls; Substrate integration.
+Only the sandbox coordination is described as existing. Privacy controls, high availability and cross-organisation behaviour need their own evidence. No throughput, latency or cost claims imported from Substrate's README as Murmur results.
+
+Transition to the A2B method
+A thread records the work and the dependencies among published messages. The next section must define when a recorded proposal becomes an authorised commitment and which resources that decision consumes.
+
+Proposed future integration tests (not Results)
+Compare directly hosted A2A with Substrate-hosted A2A under the same agents, policy and workload. Test cold resume, repeated delivery, interrupted replies and snapshot rollback after an external effect. Measure lost/duplicate effects, record reconstruction, end-to-end latency and idle resource usage. Test forbidden routes and controlled release separately. A successful runtime integration alone does not demonstrate an advantage from ATProto coordination.
+
+Sources checked 17 October 2026
+https://github.com/agent-substrate/substrate
+https://github.com/agent-substrate/substrate/blob/main/docs/architecture.md
+These are mutable documentation URLs. Pin the tested commit when implementing or reporting measurements. No integration was run for this revision.
+
+Manuscript integration note
+V4/main.tex currently includes only introduction and background. Do not add an empty coordination section to the compiled paper. Draft coordination.tex against this plan, then add its include when substantive text is ready. The abstract and introduction still contain broader prior-work claims that need a separate consistency revision; this task changes Background only.

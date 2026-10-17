@@ -1,0 +1,73 @@
+{
+  "scope": "Two one-unit deals; irreversible terminal decisions; atomic transitions; no Byzantine gateway.",
+  "runs": [
+    {
+      "budget": 1,
+      "stock": 1,
+      "ablation": "none",
+      "reachable_states": 448,
+      "transitions": 1328,
+      "counterexamples": {}
+    },
+    {
+      "budget": 1,
+      "stock": 2,
+      "ablation": "none",
+      "reachable_states": 448,
+      "transitions": 1328,
+      "counterexamples": {}
+    },
+    {
+      "budget": 2,
+      "stock": 1,
+      "ablation": "none",
+      "reachable_states": 576,
+      "transitions": 1872,
+      "counterexamples": {}
+    },
+    {
+      "budget": 1,
+      "stock": 2,
+      "ablation": "no_budget_reservation",
+      "reachable_states": 648,
+      "transitions": 2088,
+      "counterexamples": {
+        "committed_budget": [
+          "accept(0)",
+          "confirm(0)",
+          "accept(1)",
+          "confirm(1)"
+        ]
+      }
+    },
+    {
+      "budget": 2,
+      "stock": 1,
+      "ablation": "no_inventory_guard",
+      "reachable_states": 648,
+      "transitions": 2088,
+      "counterexamples": {
+        "inventory": [
+          "accept(0)",
+          "confirm(0)",
+          "accept(1)",
+          "confirm(1)"
+        ]
+      }
+    },
+    {
+      "budget": 1,
+      "stock": 1,
+      "ablation": "timeout_release",
+      "reachable_states": 512,
+      "transitions": 1540,
+      "counterexamples": {
+        "commitment_without_held_funds": [
+          "accept(0)",
+          "confirm(0)",
+          "expired"
+        ]
+      }
+    }
+  ]
+}

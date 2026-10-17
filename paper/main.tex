@@ -1,0 +1,129 @@
+\documentclass[10pt]{article}
+
+\usepackage{arxiv}
+\usepackage[T1]{fontenc}
+\usepackage{mathptmx}
+\usepackage[scaled=0.92]{helvet}
+\usepackage{courier}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc,shapes.geometric}
+% algorithm2e.sty ships Latin-1 bytes; Tectonic/XeTeX expects UTF-8.
+\XeTeXdefaultencoding "latin1"
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\XeTeXdefaultencoding "utf8"
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{xurl}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\usepackage[capitalise,noabbrev]{cleveref}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+\crefname{algocf}{Algorithm}{Algorithms}
+\Crefname{algocf}{Algorithm}{Algorithms}
+\newtheorem{proposition}{Proposition}
+
+\setlength{\emergencystretch}{1em}
+\setlist{itemsep=2pt,topsep=3pt,parsep=0pt}
+\renewcommand{\arraystretch}{1.15}
+% Prefer text pages over sparse float-only pages (Table+Figure stacked with a gap).
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.8}
+\renewcommand{\textfraction}{0.07}
+\renewcommand{\floatpagefraction}{0.85}
+\setcounter{topnumber}{2}
+\setcounter{totalnumber}{4}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+\SetKwInput{KwInput}{Input}
+\SetKwInput{KwState}{State}
+\SetKwInput{KwOutput}{Output}
+\SetKwProg{Proc}{procedure}{}{end}
+\DontPrintSemicolon
+\SetAlFnt{\small}
+
+\newcommand{\nsid}[1]{\texttt{#1}}
+\newcommand{\refpair}[1]{\langle\mathrm{uri}(#1),\mathrm{cid}(#1)\rangle}
+
+\definecolor{inherit}{RGB}{218,232,252}
+\definecolor{added}{RGB}{255,236,204}
+\definecolor{edgegray}{RGB}{110,110,110}
+\definecolor{kwblue}{RGB}{0,70,140}
+\definecolor{strgreen}{RGB}{30,110,50}
+
+\lstdefinelanguage{json}{
+  morestring=[b]",
+  stringstyle=\color{strgreen},
+  literate=
+    {:}{{{\color{kwblue}{:}}}}{1}
+    {,}{{{\color{kwblue}{,}}}}{1}
+    {\{}{{{\color{kwblue}{\{}}}}{1}
+    {\}}{{{\color{kwblue}{\}}}}}{1}
+    {[}{{{\color{kwblue}{[}}}}{1}
+    {]}{{{\color{kwblue}{]}}}}{1},
+}
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{black!30},
+  framesep=4pt,
+  xleftmargin=6pt,
+  xrightmargin=6pt,
+  breaklines=true,
+  showstringspaces=false,
+  aboveskip=6pt,
+  belowskip=4pt
+}
+
+% --------------------------------------------------------------------------
+\title{From Conversations to Commitments:\\ A Vision for Agent-to-Business Coordination}
+
+\renewcommand{\shorttitle}{From Conversations to Commitments}
+\renewcommand{\undertitle}{A Preprint}
+
+% TODO(authors): confirm affiliations and email addresses.
+\author{%
+  Carlos Eberhardt\\
+  \textit{[Affiliation]}\\
+  \texttt{[email]}
+  \And
+  Mansura Habiba\\
+  \textit{[Affiliation]}\\
+  \texttt{[email]}
+}
+
+\date{October 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Agents can exchange proposals and delegate tasks, but a business commitment requires more than a successful conversation. Independently operated organisations must connect the accepted terms to delegated authority, available resources and evidence that survives changes in participants or execution state. We hypothesise that a shared, attributable record of the interaction can improve decision reconstruction and recovery compared with point-to-point coordination using equivalent authority, reservation and retention controls. We propose Murmur, an A2B coordination method that combines AT Protocol records with A2A task execution and connects commercial decisions to organisational authority, resource reservations and controlled disclosure. Its coordination components are implemented in a sandbox; its policy gateways and commercial enforcement remain specified designs. A hypothetical airline--hotel transaction illustrates how these elements compose. Small executable design checks identify failures caused by missing admission controls and premature reservation release, but do not establish an advantage of the coordination substrate. We define the comparisons, failure cases and disclosure tests needed to assess the hypothesis, including conditions under which a simpler design may be preferable. The paper presents a concrete research agenda for connecting agent conversations to verifiable business commitments, rather than a validated cross-organisational commerce platform.
+\end{abstract}
+
+\keywords{Agent-to-business commerce $\cdot$ AT Protocol $\cdot$ Delegated authority $\cdot$ Distributed commitment $\cdot$ Information-flow control $\cdot$ Multi-agent systems}
+% ==========================================================================
+\input{introduction}
+\input{background}
+\input{hypothesis}
+\input{proposed_method}
+\input{worked_transaction}
+\input{research_agenda}
+\input{discussion}
+
+\section*{Code and evidence availability}
+The coordination implementation is at \url{https://github.com/carloseberhardt/murmur}; a specific archival commit and deployment configuration should accompany a submission. No business transaction data or participant data were used.
+
+\bibliographystyle{unsrtnat}
+\bibliography{references}
+\end{document}

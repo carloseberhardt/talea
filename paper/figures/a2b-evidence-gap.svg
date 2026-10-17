@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="183mm" height="119.94mm" viewBox="0 0 518.74 340">
+<rect width="518.74" height="340" fill="white"/>
+<rect x="8" y="27" width="149" height="275" fill="#ffffff" stroke="#cbd0d7" stroke-width="0.65"/>
+<text x="16" y="44" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="start">Supplier</text>
+<rect x="176" y="27" width="156" height="275" fill="#ffffff" stroke="#cbd0d7" stroke-width="0.65"/>
+<text x="184" y="44" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="start">Compliance service</text>
+<rect x="351" y="27" width="159" height="275" fill="#ffffff" stroke="#cbd0d7" stroke-width="0.65"/>
+<text x="359" y="44" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="start">Buyer</text>
+<g id="offer-v1">
+<rect x="23" y="69" width="119" height="33" fill="#dae8fc" stroke="#b4bbc4" stroke-width="0.65"/>
+<text x="82.5" y="89.0" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Offer v1</text>
+</g>
+<g id="check">
+<rect x="192" y="69" width="124" height="33" fill="#dae8fc" stroke="#b4bbc4" stroke-width="0.65"/>
+<text x="254.0" y="89.0" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Compliance check</text>
+</g>
+<g id="offer-v2">
+<rect x="23" y="155" width="119" height="33" fill="#dae8fc" stroke="#b4bbc4" stroke-width="0.65"/>
+<text x="82.5" y="175.0" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Revised offer v2</text>
+</g>
+<g id="acceptance">
+<rect x="369" y="155" width="123" height="33" fill="#dae8fc" stroke="#b4bbc4" stroke-width="0.65"/>
+<text x="430.5" y="175.0" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Acceptance</text>
+</g>
+<g id="inventory">
+<rect x="23" y="254" width="119" height="33" fill="#ffeccc" stroke="#b4bbc4" stroke-width="0.65"/>
+<text x="82.5" y="274.0" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Inventory reservation</text>
+</g>
+<g id="authority">
+<rect x="369" y="69" width="123" height="33" fill="#ffeccc" stroke="#b4bbc4" stroke-width="0.65"/>
+<text x="430.5" y="89.0" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Delegated authority</text>
+</g>
+<g id="funds">
+<rect x="369" y="254" width="123" height="33" fill="#ffeccc" stroke="#b4bbc4" stroke-width="0.65"/>
+<text x="430.5" y="274.0" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Funds reservation</text>
+</g>
+<polyline points="142,85 192,85" fill="none" stroke="#6b7280" stroke-width="0.85"/>
+<polyline points="188.0,83.0 192,85 188.0,87.0" fill="none" stroke="#6b7280" stroke-width="0.85"/>
+<text x="166" y="77" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">1</text>
+<polyline points="82,102 82,155" fill="none" stroke="#6b7280" stroke-width="0.85"/>
+<polyline points="84.0,151.0 82,155 80.0,151.0" fill="none" stroke="#6b7280" stroke-width="0.85"/>
+<text x="94" y="131" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">2</text>
+<polyline points="142,171 369,171" fill="none" stroke="#6b7280" stroke-width="0.85"/>
+<polyline points="365.0,169.0 369,171 365.0,173.0" fill="none" stroke="#6b7280" stroke-width="0.85"/>
+<text x="255" y="161" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">3  Exact terms accepted</text>
+<polyline points="192,93 182,93 182,135 142,135 142,155" fill="none" stroke="#236d9b" stroke-width="0.85" stroke-dasharray="2 3"/>
+<text x="254" y="120" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#236d9b" text-anchor="middle">Do the checks cover</text>
+<text x="254" y="133" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#236d9b" text-anchor="middle">the revised terms?</text>
+<polyline points="430,102 430,155" fill="none" stroke="#236d9b" stroke-width="0.85" stroke-dasharray="2 3"/>
+<text x="469" y="131" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#236d9b" text-anchor="middle">Authority?</text>
+<polyline points="430,254 430,188" fill="none" stroke="#236d9b" stroke-width="0.85" stroke-dasharray="2 3"/>
+<text x="468" y="222" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#236d9b" text-anchor="middle">Funds?</text>
+<polyline points="142,270 343,270 343,202 395,202 395,188" fill="none" stroke="#236d9b" stroke-width="0.85" stroke-dasharray="2 3"/>
+<text x="251" y="260" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#236d9b" text-anchor="middle">Inventory reserved?</text>
+<polyline points="14,318 38,318" fill="none" stroke="#6b7280" stroke-width="0.85"/>
+<polyline points="34.0,316.0 38,318 34.0,320.0" fill="none" stroke="#6b7280" stroke-width="0.85"/>
+<text x="44" y="321" font-family="Helvetica,Arial,sans-serif" font-size="9" fill="#202a35" text-anchor="start">Scenario sequence / reference</text>
+<polyline points="264,318 288,318" fill="none" stroke="#236d9b" stroke-width="0.85" stroke-dasharray="2 3"/>
+<text x="294" y="321" font-family="Helvetica,Arial,sans-serif" font-size="9" fill="#202a35" text-anchor="start">Evidence required before commitment</text>
+</svg>

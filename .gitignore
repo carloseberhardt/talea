@@ -9,3 +9,21 @@ certs/
 appview/appview
 *.cursor
 .claude/settings.local.json
+
+# Paper draft history kept locally only
+paper/V2/
+paper/v3/
+paper/V3/
+.DS_Store
+**/.DS_Store
+
+# LaTeX intermediates
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/*.synctex.gz
+paper/*.fdb_latexmk
+paper/*.fls
+paper/*.xdv

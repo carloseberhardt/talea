@@ -1,0 +1,11 @@
+{
+  "valid_binding_cases": 1,
+  "rejected_binding_mutations": 13,
+  "release_jobs": 18,
+  "private_context_variations_per_job": 48,
+  "payload_equivalence_checks": 864,
+  "rejected_release_mutations": 3456,
+  "schema_only_counterexample": "rooms = 20 + secret_bit passes range check",
+  "non_atomic_counterexample": "Two reads of balance 1 permit two reservations",
+  "scope": "Synthetic deterministic interface checks. No LLM, signatures, network, timing, or deployment is tested."
+}
