@@ -1,7 +1,10 @@
 \section{Worked transaction: disruption accommodation}
 \label{sec:example}
 
-Consider an airline seeking 300 rooms after a flight disruption. One hotel can supply 120 rooms for one night; the remaining rooms require separate deals against the same airline budget. The airline and hotel have already established their organisational identities and a framework agreement permitting settlement on account. They use a common lodging profile that defines room quantities, dates, prices and cancellation charges. This hypothetical example follows the proposed method in Section~\ref{sec:method}; all quantities and prices are illustrative, and no deployed transaction is reported.
+Consider an airline seeking 300 rooms after a flight disruption. One hotel can supply 120 rooms for one night; the remaining rooms require separate deals against the same airline budget, which \cref{sec:example-multi} takes up. The airline and hotel have already established their organisational identities and a framework agreement permitting settlement on account. They use a common lodging profile that defines room quantities, dates, prices and cancellation charges. This hypothetical example follows the proposed method in Section~\ref{sec:method}; all quantities and prices are illustrative, and no deployed transaction is reported.
+
+\subsection{One hotel}
+\label{sec:example-single}
 
 The airline's private planner receives the accommodation requirement and consults its operational information. Its approved work order permits disclosure of the airport location, dates and requested room quantity, but not its overall budget, other suppliers' offers or passenger details. The outbound emissary obtains these permitted values through the release interface. An agent directory identifies candidate hotel services, while the policy gateway verifies the selected hotel's organisational credentials and profile compatibility before a request enters the restricted deal channel. Discovery supplies a candidate counterparty; it does not authorise a purchase.
 
@@ -37,3 +40,79 @@ Figure~\ref{fig:example-reservation} isolates the airline's accounting from the 
 After confirmation, an authorised A2A task may transfer the necessary rooming information through an approved execution channel. The operation identifier contains the deal, revision and action, allowing the receiving business system to suppress duplicate execution or reconcile an uncertain response. Passenger information is released only if a separate approved work order permits it. An invoice later refers to the confirmed terms and performance evidence; settlement remains a separate event and does not redefine when the booking became committed. Replacement bookings and amendment accounting are outside this initial-commitment walkthrough.
 
 The example shows how the method connects conversation to business state. Linked records identify the final terms and the decisions leading to them. The mandate identifies the permitted action, while the airline and hotel ledgers determine whether that action has financial and inventory backing. The release interface limits what each outbound message contains, and retained terminal evidence supports recovery when publication or delivery is interrupted. These are the specified responsibilities of the proposed method; the example does not establish their effectiveness in a running multi-organisation deployment.
+
+\subsection{Three hotels}
+\label{sec:example-multi}
+
+The booking above covers 120 of the 300 rooms the airline needs. The remainder requires further deals against the same budget, and so far they have been treated as more of the same. They are not. This subsection runs the method of \cref{sec:method} on the case the example actually describes, and shows where the shared record stops being shared.
+
+\paragraph{Setup:} Three hotels respond to the airline's lodging request: A offers 120 rooms at AED~640, B offers 100 at AED~580 and C offers 80 at AED~650. The airline's budget for the disruption is AED~200,000. All figures are illustrative. The airline needs three things from the exchange. Its planner must hold all three offers and the budget to decide an allocation. Each hotel must see nothing beyond its own deal: not the other offers, not the total budget, not how many rooms remain unfilled, since a hotel that learns the airline is eighty rooms short late in the evening has reason to raise its price. And a participant arriving later on the airline side, whether a finance agent, an auditor or a logistics service booking transfers, must be able to reconstruct why A received 120 rooms at one price and C received 80 at another.
+
+\paragraph{The record graph:} Under the correlation rule of \cref{sec:method}, the airline's planner holds the disruption as one private work item and issues three approved work orders, one per hotel, each releasing only that hotel's request. Each work order opens a separate deal, $d_A$, $d_B$ and $d_C$, in its own restricted channel between the airline and that hotel. A sub-request starts a new thread rather than referencing its private parent, so no record in $d_A$ refers to $d_B$ or $d_C$, and none refers to the disruption. The correlation between the three deals, the fact that they are one decision against one budget, exists only in the airline's private store. \Cref{fig:example-multi} shows the resulting graph with each participant's visibility region drawn around it.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw,rounded corners=2pt,align=center,minimum height=0.9cm,inner sep=4pt},
+  priv/.style={box,fill=added},
+  deal/.style={box,fill=inherit,text width=4.6cm},
+  hotel/.style={box,minimum width=2.4cm},
+  region/.style={draw,dashed,rounded corners=4pt,inner sep=6pt},
+  lbl/.style={font=\scriptsize,fill=white,inner sep=1pt},
+  >={Stealth[length=5pt]}
+]
+\node[deal] (dA) {Deal $d_A$: request, offer 640,\\counter 560, final 600,\\acceptance, confirmation};
+\node[deal,below=0.5cm of dA] (dB) {Deal $d_B$: request, offer 580,\\acceptance, confirmation};
+\node[deal,below=0.5cm of dB] (dC) {Deal $d_C$: request, offer 650,\\acceptance, confirmation};
+\node[hotel,right=1.4cm of dA] (hA) {Hotel A};
+\node[hotel,right=1.4cm of dB] (hB) {Hotel B};
+\node[hotel,right=1.4cm of dC] (hC) {Hotel C};
+\node[priv,left=1.8cm of dB,text width=3.2cm] (plan) {Airline planner\\disruption: 300 rooms\\budget ledger: 200,000\\correlation $d_A,d_B,d_C$};
+\draw[->] (plan.east) -- (dA.west) node[lbl,midway,above,sloped] {work order};
+\draw[->] (plan.east) -- (dB.west) node[lbl,midway,above] {work order};
+\draw[->] (plan.east) -- (dC.west) node[lbl,midway,below,sloped] {work order};
+\draw[<->] (dA) -- (hA);
+\draw[<->] (dB) -- (hB);
+\draw[<->] (dC) -- (hC);
+\begin{scope}[on background layer]
+  \node[region,fit=(dA)(hA)] (rA) {};
+  \node[region,fit=(dB)(hB)] (rB) {};
+  \node[region,fit=(dC)(hC)] (rC) {};
+  \node[region,fit=(plan)(dA)(dC),inner sep=9pt] (rAir) {};
+\end{scope}
+\node[lbl,anchor=south east] at (rA.north east) {visible to Hotel A};
+\node[lbl,anchor=south east] at (rB.north east) {visible to Hotel B};
+\node[lbl,anchor=south east] at (rC.north east) {visible to Hotel C};
+\node[lbl,anchor=south west] at (rAir.north west) {visible inside the airline};
+\end{tikzpicture}
+\caption{Record graph for the three-hotel case. Blue nodes are deal-channel records; the amber node is the airline's private state. Each hotel's visibility region contains exactly one bilateral thread. The airline's region contains all three plus the correlation between them, which is never published. Work-order arrows carry no reference to the private parent.}
+\label{fig:example-multi}
+\end{figure}
+
+The budget condition of \cref{eq:method-budget} still holds across all three deals, because the sum over outstanding reservations $R$ is computed by the airline gateway against its private ledger. Accepting A's final offer reserves AED~72,000; accepting B's reserves AED~58,000; together they leave AED~70,000, so C's AED~52,000 is admissible, and each reservation is atomic in the airline's own transaction boundary. Nothing in this accounting is visible to any hotel. So far the method does what \cref{sec:method} says it does.
+
+\paragraph{The counter-offer:} The airline counters A at AED~560. Where does 560 come from? From B's offer at 580, which is private to $d_B$. In the single-hotel walkthrough the counter-offer was ``a separately approved negotiation action,'' and with one supplier the approval could be a fixed rule such as a percentage below the opening offer. With three suppliers the approved price is a function of the other offers. Either a human sets it, in which case the negotiation is no longer agent-mediated, or a policy computes it from the airline's private state, in which case the released value is itself a channel. The interface fixtures of \cref{sec:research-agenda} contain the one-bit form of this: a room count of $20+s$ passes every schema check and carries $s$. A counter-offer price is the many-bit form. \Cref{eq:method-release} guarantees that the outbound record is a deterministic function of the approved work order and public context; it says nothing when the work order's own values were chosen from private state. The release interface therefore holds for the initial request and for a fixed-rule counter, and stops exactly where multi-supplier negotiation begins.
+
+\paragraph{Who can reconstruct what:} \Cref{tab:example-multi} applies the reconstruction measure of \cref{sec:research-agenda} to each participant class, for the proposed method and for the comparator of signed point-to-point exchange with a directory and durable local histories.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Reconstruction by participant class in the three-hotel case.}
+\label{tab:example-multi}
+\begin{tabularx}{\textwidth}{@{}P{3.6cm}LL@{}}
+\toprule
+Participant & Can retrieve and verify & Under the comparator \\
+\midrule
+Hotel A's agent, auditor or late-joining service & $d_A$ only: the request, offers, acceptance and its own terminal record & The same, from its bilateral log \\
+Hotel B, Hotel C & Their own deal, as above & The same \\
+Airline planner & $d_A$, $d_B$, $d_C$ and the private correlation & The same, from three bilateral logs and its own state \\
+Airline finance, audit or logistics, joining later & $d_A$, $d_B$, $d_C$ as signed records, plus the private correlation, without the planner's process state & Three bilateral logs, if retained, plus whatever the planner exported \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+For every hotel-side participant the shared record contains exactly one bilateral thread, which is what a signed point-to-point log contains. The hypothesis predicts no measurable difference for them, and the correlation rule guarantees there is none, because the correlation that would make the record more than bilateral is the thing that must not be published. The difference appears in the last row only. A participant inside the airline's boundary, arriving after the fact, can retrieve three signed deal threads and the private correlation and rebuild the allocation decision without the planner having been built to export it. Under the comparator that reconstruction depends on the planner's retention and export discipline, which is the dependence the hypothesis is about.
+
+\paragraph{What the case shows:} Under the disclosure constraints of \cref{sec:method}, the multi-party case decomposes into pairwise channels plus one hub that holds their union. The shared record converges on the point-to-point topology for every party except the hub, whatever substrate carries it. The substrate's advantage does not vanish, but it moves: it lands inside the hub's trust boundary, where participants are fluid and the planner's memory is not the record. The disclosure interface, meanwhile, covers fixed-value releases and stops at adaptive negotiation, which is the part of the exchange that reads private state by construction. \Cref{sec:research-agenda} states both results as a boundary on the hypothesis.
