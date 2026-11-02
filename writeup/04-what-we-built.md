@@ -101,6 +101,18 @@ resolver from section 3. The sandbox is still a single instance, but the
 single-PDS assumption is gone: adding a second organization is a relay crawl
 and some configuration, not a refactor.
 
+**Everything murmur adds lives outside the protocol.** The PDS, relay, and
+PLC directory are stock; murmur's record types use custom Lexicons, which are
+the protocol's designed extension point; and everything else — the bridge,
+the dispatch rules, the topology of section 6, the declassification machinery
+of section 7 — is deployment and policy at the edge. A vanilla atproto
+participant can read every record murmur produces. (One sandbox-only
+exception, named for honesty: the reference relay's SSRF guard is patched, one
+line, to allow private-network addresses — unnecessary once real domains are
+involved.) The constraint is load-bearing for adoption: require a forked
+server and every participant inherits the fork, and the bilateral tax returns
+one layer down.
+
 ## What is deliberately not in scope
 
 The sandbox omits things on purpose, and the honest list matters for reading
