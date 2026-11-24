@@ -8,7 +8,7 @@ set -euo pipefail
 RELAY_HOST="http://localhost:2470"
 RELAY_ADMIN_PASSWORD="relay-admin-dev"
 # Must match PDS_HOSTNAME — relay resolves this via Docker DNS
-PDS_HOSTNAME="pds.murmur.internal"
+PDS_HOSTNAME="pds.talea.internal"
 
 # Wait for relay to be ready
 echo "Waiting for relay..."

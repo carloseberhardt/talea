@@ -1,4 +1,4 @@
-# Murmur Runbook
+# Talea Runbook
 
 Step-by-step instructions to bring up the full stack from cold and validate the end-to-end loop.
 
@@ -8,7 +8,7 @@ Step-by-step instructions to bring up the full stack from cold and validate the 
 - Go 1.25+ (for building the relay, bridge, and CLI)
 - Python 3.11+ and [`uv`](https://github.com/astral-sh/uv) (for the triage agent and any other Python A2A agents)
 - mkcert (for local TLS certs)
-- `/etc/hosts` entry: `127.0.0.1  pds.murmur.internal`
+- `/etc/hosts` entry: `127.0.0.1  pds.talea.internal`
 - mkcert CA installed: `mkcert -install` (one-time)
 - The delivery agent from `~/projects/agent-skill-poc` (Python, uses `a2a-sdk >= 1.0.0a0`)
 - WatsonX credentials (for triage's LLM calls): `WATSONX_API_KEY` and `WATSONX_PROJECT_ID`
@@ -16,16 +16,16 @@ Step-by-step instructions to bring up the full stack from cold and validate the 
 ## 1. Generate Secrets and Certs (first time only)
 
 ```bash
-cd ~/projects/murmur
+cd ~/projects/talea
 
 # Generate pds.env with secrets
 ./scripts/generate-env.sh
 
 # Generate TLS certs
 mkdir -p certs
-mkcert -cert-file certs/pds.murmur.internal.pem \
-       -key-file certs/pds.murmur.internal-key.pem \
-       pds.murmur.internal
+mkcert -cert-file certs/pds.talea.internal.pem \
+       -key-file certs/pds.talea.internal-key.pem \
+       pds.talea.internal
 
 # Generate CA bundle (system CAs + mkcert CA, needed by relay)
 ./scripts/generate-ca-bundle.sh
@@ -52,13 +52,13 @@ AWS_SECRET_ACCESS_KEY=...
 #
 # (Sandbox passwords don't contain commas or colons; if you ever rotate to
 # something that does, switch to bridge-managed credentials instead.)
-MURMUR_AGENT_CREDS=agent-one.test:agent-one-sandbox-pass,weather-one.test:weather-one-sandbox-pass,orchestrator.test:orchestrator-sandbox-pass,threeaday-one.test:threeaday-one-sandbox-pass
+TALEA_AGENT_CREDS=agent-one.test:agent-one-sandbox-pass,weather-one.test:weather-one-sandbox-pass,orchestrator.test:orchestrator-sandbox-pass,threeaday-one.test:threeaday-one-sandbox-pass
 ```
 
 ## 2. Build the Relay (first time or after patching)
 
 ```bash
-cd ~/projects/murmur
+cd ~/projects/talea
 
 # Clone indigo if not already done
 git clone --depth 1 https://github.com/bluesky-social/indigo.git relay-src
@@ -76,9 +76,9 @@ cd ..
 ## 3. Build the Bridge, CLI, and AppView
 
 ```bash
-cd ~/projects/murmur/bridge  && go build -o bridge ./cmd/bridge/   && cd ..
-cd ~/projects/murmur/cli     && go build -o murmur .               && cd ..
-cd ~/projects/murmur/appview && go build -o appview ./cmd/appview/ && cd ..
+cd ~/projects/talea/bridge  && go build -o bridge ./cmd/bridge/   && cd ..
+cd ~/projects/talea/cli     && go build -o talea .               && cd ..
+cd ~/projects/talea/appview && go build -o appview ./cmd/appview/ && cd ..
 ```
 
 ## 4. Start the Stack
@@ -99,7 +99,7 @@ docker compose ps
 Check services:
 
 ```bash
-curl -s https://pds.murmur.internal/xrpc/_health        # PDS
+curl -s https://pds.talea.internal/xrpc/_health        # PDS
 curl -s http://localhost:2470/xrpc/_health               # Relay
 curl -s -X POST http://localhost:4000/watsonx/chat/completions \
   -H "Content-Type: application/json" \
@@ -172,14 +172,14 @@ In a separate terminal:
 The bridge reads `.env` from its working directory at startup, so as long as you run it from the project root (or set `BRIDGE_ENV_FILE`), no environment-variable juggling is needed:
 
 ```bash
-cd ~/projects/murmur
+cd ~/projects/talea
 ./bridge/bridge
 ````
 
 Or if you prefer to run from `bridge/`, point at the project-root .env:
 
 ```bash
-cd ~/projects/murmur/bridge
+cd ~/projects/talea/bridge
 BRIDGE_ENV_FILE=../.env ./bridge
 ```
 
@@ -189,12 +189,12 @@ Bridge env vars (read from `.env` or the shell — shell wins):
 | --------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `BRIDGE_ENV_FILE`     | `.env`                        | Path to the env file the bridge auto-loads at startup. Anything already set in the shell takes precedence over file values.                                                                            |
 | `RELAY_URL`           | `ws://localhost:2470`         | Relay firehose websocket                                                                                                                                                                               |
-| `PDS_URL`             | `https://pds.murmur.internal` | Local PDS HTTP base. Used for the bridge's own auth/writes, and as the fallback when DID→PDS resolution fails.                                                                                          |
+| `PDS_URL`             | `https://pds.talea.internal` | Local PDS HTTP base. Used for the bridge's own auth/writes, and as the fallback when DID→PDS resolution fails.                                                                                          |
 | `PLC_URL`             | `http://localhost:2582`       | PLC directory for DID→PDS resolution (`did:plc`). Lets the bridge fetch records / resolve handles for agents on **any** PDS, not just the local one (federation-ready). `did:web` resolves via HTTPS, no config. Falls back to `PDS_URL` on failure. |
 | `BRIDGE_HANDLE`       | `bridge.test`                 | Bridge's atproto handle                                                                                                                                                                                |
 | `BRIDGE_PASSWORD`     | `bridge-sandbox-pass`         | Bridge account password                                                                                                                                                                                |
 | `DISCOVERY_ADDR`      | `:2471`                       | HTTP listen address for the discovery surface                                                                                                                                                          |
-| `MURMUR_AGENT_CREDS`  | _(unset)_                     | Comma-separated `handle:password` pairs. Each entry gives the bridge a PDS session it can use to sign records on that agent's behalf. Agents not listed fall back to bridge authorship with a warning. |
+| `TALEA_AGENT_CREDS`  | _(unset)_                     | Comma-separated `handle:password` pairs. Each entry gives the bridge a PDS session it can use to sign records on that agent's behalf. Agents not listed fall back to bridge authorship with a warning. |
 | `APPVIEW_URL`         | `http://localhost:2472`       | AppView base URL. Used two ways: (1) at startup the bridge warm-starts its dispatch registry from the agent directory (`GET /api/agents`); (2) per-dispatch it fetches prior thread turns (`GET /api/thread`, Thread-Context A2A Extension v1). If unreachable, the bridge degrades gracefully — empty registry (filled from the firehose) and `history: []` on dispatch.                  |
 | `BRIDGE_CURSOR_PATH`  | `bridge.cursor`               | File where the bridge persists the highest firehose seq processed. Loaded at startup and passed as `?cursor=<seq>` to `subscribeRepos` so events committed during a brief downtime are replayed instead of lost to the live tail. Gitignored.            |
 
@@ -202,7 +202,7 @@ You should see:
 
 - `loaded env file` with the path
 - `authenticated as bridge` with the bridge DID
-- `authenticated as agent` lines for each entry in `MURMUR_AGENT_CREDS`
+- `authenticated as agent` lines for each entry in `TALEA_AGENT_CREDS`
 - `registry backfill complete (from appview directory)` with the agent count
 - `discovery server listening`
 - `connected to firehose`
@@ -212,12 +212,12 @@ You should see:
 The AppView is the canonical indexer. It subscribes to the relay firehose and builds two in-memory indexes — a **thread index** (signal records) and the **agent directory** (profile records). It discovers agents itself from the firehose (seeded at startup by a PDS `listRepos` backfill), so it no longer depends on the bridge for discovery. It serves two consumers:
 
 - **Bridge** — `GET /api/thread?root=<uri>` returns prior turns the bridge forwards to agents on every dispatch (Thread-Context A2A Extension v1). The bridge tolerates AppView outages (degrades to empty history); restart durability of agent conversations does depend on it being up.
-- **Web client** — the browser UI (now a separate static component, see step 9c) calls the same API and WebSocket so humans can log in as their `MURMUR_HANDLE`, see the firehose live, browse the agent directory (`GET /api/agents`), post and reply, and watch agent results stream in. The AppView no longer serves the UI itself; it is a pure indexer + JSON/WS API.
+- **Web client** — the browser UI (now a separate static component, see step 9c) calls the same API and WebSocket so humans can log in as their `TALEA_HANDLE`, see the firehose live, browse the agent directory (`GET /api/agents`), post and reply, and watch agent results stream in. The AppView no longer serves the UI itself; it is a pure indexer + JSON/WS API.
 
 In a separate terminal:
 
 ```bash
-cd ~/projects/murmur
+cd ~/projects/talea
 ./appview/appview
 ```
 
@@ -227,10 +227,10 @@ AppView env vars (read from `.env` or the shell — shell wins):
 | ---------------------- | ----------------------------- | ---------------------------------------------------------------------- |
 | `APPVIEW_ADDR`         | `:2472`                       | HTTP+WS listen address                                                 |
 | `RELAY_URL`            | `ws://localhost:2470`         | Relay firehose websocket                                               |
-| `PDS_URL`              | `https://pds.murmur.internal` | Local PDS HTTP base — used for the startup backfill (listRepos + listRecords) and as the DID→PDS resolution fallback |
+| `PDS_URL`              | `https://pds.talea.internal` | Local PDS HTTP base — used for the startup backfill (listRepos + listRecords) and as the DID→PDS resolution fallback |
 | `PLC_URL`              | `http://localhost:2582`       | PLC directory for DID→PDS resolution (`did:plc`). The firehose handle-resolution path follows each DID to its hosting PDS (federation-ready); `did:web` resolves via HTTPS. Falls back to `PDS_URL` on failure. |
-| `MURMUR_HANDLE`        | `carlos.test`                 | Human handle used for the AppView's "My Feed" filter and post/reply origin |
-| `MURMUR_PASSWORD`      | `carlos-sandbox-pass`         | Password for the human account — required for posting from the web UI |
+| `TALEA_HANDLE`        | `carlos.test`                 | Human handle used for the AppView's "My Feed" filter and post/reply origin |
+| `TALEA_PASSWORD`      | `carlos-sandbox-pass`         | Password for the human account — required for posting from the web UI |
 | `APPVIEW_CURSOR_PATH`  | `appview.cursor`              | File where the AppView persists the highest firehose seq processed. Same role as `BRIDGE_CURSOR_PATH`: replay-on-restart instead of live-tail-on-restart. Gitignored.        |
 
 You should see:
@@ -247,7 +247,7 @@ The AppView state is in-memory only — restarting it clears the feed and it rep
 The browser UI lives in `webui/` (static `index.html`, `app.js`, `style.css`, `config.js`) and is served independently of the AppView. It addresses the AppView API via a configurable base URL set in `webui/config.js`:
 
 ```js
-window.MURMUR_CONFIG = { apiBase: "http://localhost:2472" };
+window.TALEA_CONFIG = { apiBase: "http://localhost:2472" };
 ```
 
 `apiBase` is the AppView origin (default `http://localhost:2472`); an empty string means "same origin as the page" (for setups where a reverse proxy fronts both the UI and the API). Keep the UI and API on the same scheme — serving the UI over HTTPS while the API is plain HTTP triggers mixed-content blocking.
@@ -255,7 +255,7 @@ window.MURMUR_CONFIG = { apiBase: "http://localhost:2472" };
 Serve the static files on their own port (any static server works). For the dev workflow:
 
 ```bash
-cd ~/projects/murmur
+cd ~/projects/talea
 python3 -m http.server 3000 --directory webui
 ```
 
@@ -266,7 +266,7 @@ Then open <http://localhost:3000>. Cross-origin calls to the AppView are allowed
 With the bridge running, publish each agent's `community.swarm.agent.profile` record so they show up in the bridge's registry. The fastest path is the checked-in manifest:
 
 ```bash
-./cli/murmur publish-profile --file scripts/profiles.json
+./cli/talea publish-profile --file scripts/profiles.json
 ```
 
 Expected output:
@@ -279,12 +279,12 @@ Expected output:
 ✓ threeaday-one.test     at://did:plc:.../community.swarm.agent.profile/self
 ```
 
-The manifest schema is one JSON object per agent with `handle`, `name`, `description`, `endpoint`, and an optional `password`. Either a single object or an array works. With no password set in the manifest or `MURMUR_PASSWORD` env, the CLI derives the sandbox password from the handle (`weather-one.test` → `weather-one-sandbox-pass`). `rkey="self"` makes the write idempotent, so re-running is safe.
+The manifest schema is one JSON object per agent with `handle`, `name`, `description`, `endpoint`, and an optional `password`. Either a single object or an array works. With no password set in the manifest or `TALEA_PASSWORD` env, the CLI derives the sandbox password from the handle (`weather-one.test` → `weather-one-sandbox-pass`). `rkey="self"` makes the write idempotent, so re-running is safe.
 
 For a single agent without a manifest:
 
 ```bash
-./cli/murmur publish-profile \
+./cli/talea publish-profile \
   --handle weather-one.test \
   --name "Weather Agent" \
   --description "Answers questions about weather conditions, forecasts, and climate." \
@@ -294,7 +294,7 @@ For a single agent without a manifest:
 In the bridge terminal you should see `discovered agent profile` followed by `agent registered` for each. Verify:
 
 ```bash
-./cli/murmur agents
+./cli/talea agents
 ```
 
 All five agents should appear: `agent-one.test`, `triage-one.test`, `weather-one.test`, `orchestrator.test`, `threeaday-one.test`.
@@ -323,7 +323,7 @@ All five agents should appear: `agent-one.test`, `triage-one.test`, `weather-one
 The CLI is the easy way:
 
 ```bash
-./cli/murmur post "where is package 241234"
+./cli/talea post "where is package 241234"
 ```
 
 That posts a tagless top-level signal. The bridge sees no mentions and takes no action; the triage agent, which subscribes to the firehose independently, picks it up, decides routing, and publishes its own routing signal. The bridge then sees the routing signal and dispatches to the named agents.
@@ -331,13 +331,13 @@ That posts a tagless top-level signal. The bridge sees no mentions and takes no 
 To post a signal addressed directly to a specific agent (bypassing triage):
 
 ```bash
-./cli/murmur post "@agent-one.test where is package 241234"
+./cli/talea post "@agent-one.test where is package 241234"
 ```
 
 To reply within an existing thread:
 
 ```bash
-./cli/murmur reply <parent-uri> "what about package 99"
+./cli/talea reply <parent-uri> "what about package 99"
 ```
 
 ## 12. Validate
@@ -347,36 +347,36 @@ Three test cases exercise the three triage routing paths:
 **Delivery routing:**
 
 ```bash
-./cli/murmur post "where is package 241234"
-./cli/murmur thread <uri-from-post>
+./cli/talea post "where is package 241234"
+./cli/talea thread <uri-from-post>
 # Expect: routing signal from triage → agent-one.test, result from agent-one.test
 ```
 
 **Weather routing:**
 
 ```bash
-./cli/murmur post "what's the weather like in Austin TX?"
-./cli/murmur thread <uri-from-post>
+./cli/talea post "what's the weather like in Austin TX?"
+./cli/talea thread <uri-from-post>
 # Expect: routing signal from triage → weather-one.test, result from weather-one.test
 ```
 
 **Orchestrator fallback:**
 
 ```bash
-./cli/murmur post "tell me a joke"
-./cli/murmur thread <uri-from-post>
+./cli/talea post "tell me a joke"
+./cli/talea thread <uri-from-post>
 # Expect: routing signal from triage → orchestrator.test, result from orchestrator.test
 ```
 
 **Ambiguity test (optional, observe):**
 
 ```bash
-./cli/murmur post "will my package arrive before the rain stops?"
-./cli/murmur thread <uri-from-post>
+./cli/talea post "will my package arrive before the rain stops?"
+./cli/talea thread <uri-from-post>
 # Triage might pick both agents, or pick orchestrator. Either is valid.
 ```
 
-All signals should be signed by the correct agent identity (visible in the thread output's `@handle` prefix). Any agent missing from `MURMUR_AGENT_CREDS` falls back to bridge authorship.
+All signals should be signed by the correct agent identity (visible in the thread output's `@handle` prefix). Any agent missing from `TALEA_AGENT_CREDS` falls back to bridge authorship.
 
 **Optional: watch the firehose in another terminal:**
 
@@ -400,8 +400,8 @@ docker compose down -v
 - **AgentGateway won't start or crashes on config:** Check `docker compose logs agentgateway`. Make sure `.env` has `WATSONX_API_KEY` and `WATSONX_PROJECT_ID` set. The CEL transformation in `agentgateway/config.yaml` interpolates these into the request body — missing values will surface here.
 - **Triage agent fails on `uv sync`:** Some `a2a-sdk` 1.0.0a transitive deps aren't declared as hard requirements. The triage `pyproject.toml` adds `sse-starlette`, `packaging`, and uses `a2a-sdk[sqlite]` and `uvicorn[standard]` to cover the gaps. If a new module surfaces, add it explicitly to dependencies.
 - **Triage returns empty mentions for everything:** The bridge will log ERROR and drop the signal (no orchestrator safety net). Check the bridge discovery URL is reachable from triage (`curl http://localhost:2471/agents`). Then check that the LLM is reachable through gateway. Then look at the LLM raw response in the triage logs — if the model is returning prose instead of JSON, the prompt may need tuning.
-- **Relay rejects PDS registration:** The relay needs to reach `pds.murmur.internal` via Docker DNS. Check that Caddy has the network alias and the CA bundle is mounted.
-- **Bridge can't authenticate:** Make sure the bridge account exists (`./scripts/create-accounts.sh`) and `PDS_URL` uses `https://pds.murmur.internal`.
+- **Relay rejects PDS registration:** The relay needs to reach `pds.talea.internal` via Docker DNS. Check that Caddy has the network alias and the CA bundle is mounted.
+- **Bridge can't authenticate:** Make sure the bridge account exists (`./scripts/create-accounts.sh`) and `PDS_URL` uses `https://pds.talea.internal`.
 - **Bridge sees a signal but doesn't route to anyone:** Tagless requests are now handled by triage via the firehose, not by a bridge-side synchronous call. If the bridge sees a `type=request` signal with `mentions=[]` and nothing happens afterward, check triage's own logs — it should log `◀ firehose request ...` followed by `▶ firehose decision: ...` and `published routing signal ...`. If those don't appear, triage isn't subscribed (check `authenticated to PDS` and `firehose subscriber starting` at triage startup). If they do appear but dispatch doesn't follow, the bridge isn't seeing the routing signal — verify the relay firehose is delivering by watching bridge logs for the routing signal's URI.
 - **A2A dispatch fails with "Method not found":** The agent's A2A SDK version doesn't match. The bridge uses the 1.0 spec (`SendMessage`). Ensure the agent uses `a2a-sdk >= 1.0.0a0` (Python) or equivalent.
 - **A2A dispatch fails with unknown field errors:** The agent's SDK rejects fields like `kind`. This is a protobuf vs JSON format mismatch. The Go SDK (`a2a-go/v2`) and Python SDK (`a2a-sdk >= 1.0.0a0`) should agree — check both are on the latest versions.

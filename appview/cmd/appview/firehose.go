@@ -87,7 +87,7 @@ func runFirehose(ctx context.Context, relayURL, cursorPath string, state *State,
 		logger.Info("connecting to relay firehose", "url", urlStr, "retries", retries)
 
 		con, _, err := gorillaws.DefaultDialer.DialContext(ctx, urlStr, http.Header{
-			"User-Agent": []string{"murmur-appview/0.1"},
+			"User-Agent": []string{"talea-appview/0.1"},
 		})
 		if err != nil {
 			logger.Warn("firehose dial failed", "error", err, "retries", retries)

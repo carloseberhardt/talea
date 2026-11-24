@@ -39,7 +39,7 @@ There is no unsend. Section 7 turns on this property.
 language. Two services using the same Lexicon share an exact typed contract —
 there is no drift between producer and consumer, and no bilateral negotiation:
 the definition is published once and any party validates against it. Custom
-Lexicons (murmur defines its own under a `community.swarm.*` namespace) ride
+Lexicons (talea defines its own under a `community.swarm.*` namespace) ride
 the same infrastructure as Bluesky's social records, which is part of what
 makes the protocol general rather than a social-media appliance.
 
@@ -82,7 +82,7 @@ task and returns a result, and it shouldn't — that exchange is point-to-point
 and already has a protocol. A2A gives agents a card describing their
 capabilities, an endpoint, and a task lifecycle with typed messages.
 
-Murmur keeps the two layers strictly separate: every act of coordination is a
+Talea keeps the two layers strictly separate: every act of coordination is a
 public signed record on the firehose, and the work itself moves over A2A
 between exactly two endpoints. Collapsing them fails in both directions.
 Task payloads on the firehose would make every execution detail a broadcast;
@@ -115,7 +115,7 @@ are easy to conflate. **Identity-lifecycle audit** is the history of key
 rotations, handle changes, and host migrations; that is what PLC's signed
 log provides, and it is the only thing `did:web` gives up. **Data audit** —
 who authored what, when, to whom — lives in the signed repository, carried
-by the signing key in the DID document regardless of method. Murmur's entire
+by the signing key in the DID document regardless of method. Talea's entire
 audit story is the second layer, and it is identical under both methods. The
 audit guarantees that matter for agents do not depend on PLC at all.
 

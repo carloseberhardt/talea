@@ -1,4 +1,4 @@
-module github.com/carlose/murmur/bridge
+module github.com/carloseberhardt/talea/bridge
 
 go 1.25
 

@@ -1,4 +1,4 @@
-# Murmur: atproto as an Agent Communication Substrate
+# Talea: atproto as an Agent Communication Substrate
 
 ## Overview
 

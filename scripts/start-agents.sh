@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start all murmur A2A agents in one terminal. Ctrl-C kills them all cleanly.
+# Start all talea A2A agents in one terminal. Ctrl-C kills them all cleanly.
 #
 # The delivery agent lives in agent-skill-poc; the swarm-native agents (triage,
 # weather, orchestrator, threeaday) live in a sibling repo under
@@ -42,7 +42,7 @@ start_agent() {
   echo "  $name (port $port) — PID $!"
 }
 
-echo "Starting murmur A2A agents..."
+echo "Starting talea A2A agents..."
 
 # Delivery agent (from agent-skill-poc)
 if [ -d "$AGENT_SKILL_POC" ]; then

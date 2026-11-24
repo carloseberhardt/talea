@@ -158,7 +158,19 @@ Private data on atproto is not a missing feature. It is outside the abstraction,
 designers' own account. Our private PDS reaches the same judgment through
 topology: every bit of privacy in the section 6 trace came from network
 isolation — from controlling who can crawl what — and none of it came from the
-protocol.
+protocol. The mitigations earlier in this section hold the same line: taint
+tracking and the emissary split are deployment-layer machinery, gating what
+may enter the public substrate rather than asking the substrate to change.
+Part of the machinery can even be protocol-native. Lexicons are the
+sanctioned extension point, so the guard's decisions — what was withheld,
+which mechanism approved a release — can be published as signed records in
+our own schema, exactly the way routing decisions already are. The
+enforcement stays in code at the edge; a schema can describe a
+declassification, not perform one. And the bookkeeping belongs on the
+private side, because a public record tagged "derived from private
+material" would itself leak. That posture is a constraint we set on purpose. A privacy fix that only works
+by forking the protocol would cost the adoption story the substrate exists to
+provide.
 
 Choosing a different substrate does not make declassification go away.
 Anything with a send primitive has the un-send problem in some strength.

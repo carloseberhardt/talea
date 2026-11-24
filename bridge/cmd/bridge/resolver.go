@@ -35,7 +35,7 @@ func NewResolver(plcURL, fallbackPDS string, logger *slog.Logger) *Resolver {
 		// the PDS directly, so skip the bidirectional handle verification — it
 		// needs DNS / .well-known that the sandbox's .test handles don't have.
 		SkipHandleVerification: true,
-		UserAgent:              "murmur-bridge/0.1",
+		UserAgent:              "talea-bridge/0.1",
 	}
 	dir := identity.NewCacheDirectory(base, 10_000, time.Hour, 5*time.Minute, 5*time.Minute)
 	return &Resolver{dir: dir, fallback: fallbackPDS, logger: logger}

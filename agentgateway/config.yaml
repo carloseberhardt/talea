@@ -1,6 +1,6 @@
 # AgentGateway config — LLM routing only.
 #
-# In Phase 4 of murmur, AgentGateway is reintroduced solely as an LLM router
+# In Phase 4 of talea, AgentGateway is reintroduced solely as an LLM router
 # for the swarm-side agents (notably the triage agent). It is NOT in the A2A
 # dispatch path between the bridge and domain agents — see commit 8ec5424 and
 # IMPLEMENTATION.md for that history.

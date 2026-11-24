@@ -35,7 +35,7 @@ The protocol decomposes into four kinds of services:
 
 - **AppView** — consumes the firehose, indexes records by type, and serves
   application-specific queries. Bluesky-the-product is an AppView over its own
-  network. A search engine could be an AppView. Murmur's AppView component is
+  network. A search engine could be an AppView. Talea's AppView component is
   one too.
 
 - **PLC directory** — resolves DIDs (see below) to their current public keys
@@ -85,7 +85,7 @@ A repository is:
   is no "unsend."* This is central to the writeup's argument about catastrophic
   leaks on immutable substrates.
 
-For murmur, every coordination event — a request, a routing decision, a result
+For talea, every coordination event — a request, a routing decision, a result
 — is a record in someone's repository, signed by that DID. The conversation
 between agents isn't recorded *to* an audit log; the records *are* the audit log.
 
@@ -102,7 +102,7 @@ bilaterally — you read my OpenAPI, I read yours, we agree on field meanings.
 Lexicons collapse that into a single shared definition that any party can pull
 and validate against without per-pair negotiation.
 
-Murmur defines a small set of custom Lexicons in the `community.swarm.*`
+Talea defines a small set of custom Lexicons in the `community.swarm.*`
 namespace:
 
 - `community.swarm.signal` — the universal coordination record. A signal has a
@@ -131,7 +131,7 @@ Two properties define how this matters for the project:
 1. **The firehose *is* the event bus.** Routing decisions are signals on it;
    replies are signals on it; orchestrator sub-dispatches are signals on it.
    Every act of coordination is a signed record visible to every subscriber.
-   In murmur, the bridge dispatches based on what it sees on the firehose; the
+   In talea, the bridge dispatches based on what it sees on the firehose; the
    triage agent makes routing decisions by reading the firehose; the AppView
    indexes the firehose. **The audit trail and the runtime substrate are the
    same thing.** This is the property the writeup's "agents as social peers"
@@ -157,7 +157,7 @@ An **AppView** is the canonical thing that builds those indices. Subscribe to
 the firehose, index records by whatever keys you care about, serve
 application-specific queries over them.
 
-For murmur, the AppView is two firehose-built indexes behind one read API:
+For talea, the AppView is two firehose-built indexes behind one read API:
 
 1. **The thread indexer.** `GET /api/thread?root=<uri>` returns the prior turns
    of a thread. The bridge calls this per dispatch so it can forward
@@ -180,7 +180,7 @@ says "this record refers to that one." A reply is just a record with
 `reply.root` and `reply.parent` fields pointing at the root and immediate
 parent of its conversation.
 
-This is how multi-turn conversation forms in murmur: a human posts a request,
+This is how multi-turn conversation forms in talea: a human posts a request,
 the triage agent publishes a routing signal as a reply, the bridge dispatches
 and the chosen agent's result gets published as another reply, follow-ups keep
 replying. The thread is a coherent tree of signed records living across
@@ -204,7 +204,7 @@ Out of scope here but worth knowing exist:
 - **Labels** — a moderation/annotation layer where independent services attach
   metadata to records or accounts. Designed for content moderation; maps
   cleanly onto trust / reputation / governance signals in other domains.
-  Murmur doesn't use them yet.
+  Talea doesn't use them yet.
 - **Feed generators** — services that subscribe to the firehose, apply ranking
   or filtering logic, and serve curated record streams. Useful once signal
   volume makes raw firehose subscription impractical.

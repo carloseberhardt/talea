@@ -1,17 +1,17 @@
-\section{Murmur coordination method}
+\section{Talea coordination method}
 \label{sec:method}
 \label{sec:coordination}
 
-Murmur is our proposed method for connecting agent conversations to authorised, resource-backed business commitments. It represents interactions as linked records and uses A2A services to execute tasks. Within this method, agents propose terms and actions, whereas organisational gateways determine whether those actions are authorised and supported by available resources. The input is a request, the participating agents' identities and capabilities, and the relevant organisational policies. The output is a retained record of the interaction and, when the commercial checks succeed, a commitment linking exact terms to authority and resource decisions. The coordination mechanism exists as a single-operator sandbox. The gateways, commercial state machine and disclosure controls below are specified components of the method that remain to be implemented.
+Talea is the apparatus of this study: a coordination layer that connects agent conversations to authorised, resource-backed business commitments. It represents interactions as linked records and uses A2A services to execute tasks. Within this method, agents propose terms and actions, whereas organisational gateways determine whether those actions are authorised and supported by available resources. The input is a request, the participating agents' identities and capabilities, and the relevant organisational policies. The output is a retained record of the interaction and, when the commercial checks succeed, a commitment linking exact terms to authority and resource decisions. The coordination mechanism exists as a single-operator sandbox. The gateways, commercial state machine and disclosure controls below are specified components of the method that remain to be implemented.
 
 \subsection{Representing and executing a collaboration}
 
-Three record families define the existing coordination model. A \texttt{community.swarm.signal} records a request, routing decision or result, together with mentions, reply references and A2A correlation fields. Agent profiles advertise capabilities and execution endpoints. Endorsements express a participant's support or challenge; they do not certify competence or confer organisational authority. Accounts publish these records to Personal Data Servers (PDSes), and relay events distribute repository changes. The AppView indexes profiles and conversations. The bridge resolves addressed agents, invokes their A2A endpoints and publishes responses using the credentials it holds. Figure~\ref{fig:method-coordination} follows the implemented coordination path from record publication to task execution and response publication. It shows how conversation context reaches an agent; commercial admission controls are introduced separately below.
+Three record families define the existing coordination model. A \texttt{community.swarm.signal} records a request, routing decision or result, together with mentions, reply references and A2A correlation fields. Agent profiles advertise capabilities and execution endpoints. Endorsements express a participant's support or challenge; they do not certify competence or confer organisational authority. Accounts publish these records to Personal Data Servers (PDSs), and relay events distribute repository changes. The AppView indexes profiles and conversations. The bridge resolves addressed agents, invokes their A2A endpoints and publishes responses using the credentials it holds. Figure~\ref{fig:method-coordination} follows the implemented coordination path from record publication to task execution and response publication. It shows how conversation context reaches an agent; commercial admission controls are introduced separately below.
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=\textwidth]{figures/murmur-coordination.pdf}
-\caption{Implemented Murmur coordination path. Participants publish to a PDS; relay events reach triage, the AppView and bridge. Triage publishes routing records, the AppView supplies indexed context, and the bridge invokes A2A services and publishes responses or sub-requests. Blue denotes protocol infrastructure and amber denotes Murmur coordination services. The bridge holds publication credentials; this diagram does not imply implemented commercial authorisation.}
+\includegraphics[width=\textwidth]{figures/talea-coordination.pdf}
+\caption{Implemented Talea coordination path. Participants publish to a PDS; relay events reach triage, the AppView and bridge. Triage publishes routing records, the AppView supplies indexed context, and the bridge invokes A2A services and publishes responses or sub-requests. Blue denotes protocol infrastructure and amber denotes Talea coordination services. The bridge holds publication credentials; this diagram does not imply implemented commercial authorisation.}
 \label{fig:method-coordination}
 \end{figure}
 
@@ -40,8 +40,8 @@ Figure~\ref{fig:method-deployment} locates the proposed policy and resource cont
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=\textwidth]{figures/murmur-a2b-deployment.pdf}
-\caption{Proposed Murmur deployment for A2B. Private planners submit actions to organisational policy gateways. Approved decisions are committed to local resource ledgers and outboxes before publication to the restricted deal channel. Each party observes and verifies the published evidence. Public profiles support discovery separately. Blue identifies existing protocol components; amber identifies proposed enforcement or restricted deployment arrangements, not implemented confidentiality features of AT Protocol. A2A execution, omitted from this deployment view, uses separately authorised payloads and effect identifiers.}
+\includegraphics[width=\textwidth]{figures/talea-a2b-deployment.pdf}
+\caption{Proposed Talea deployment for A2B. Private planners submit actions to organisational policy gateways. Approved decisions are committed to local resource ledgers and outboxes before publication to the restricted deal channel. Each party observes and verifies the published evidence. Public profiles support discovery separately. Blue identifies existing protocol components; amber identifies proposed enforcement or restricted deployment arrangements, not implemented confidentiality features of AT Protocol. A2A execution, omitted from this deployment view, uses separately authorised payloads and effect identifiers.}
 \label{fig:method-deployment}
 \end{figure}
 
@@ -82,83 +82,17 @@ Figure~\ref{fig:method-evidence} specifies the evidence structure for an admitte
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=\textwidth]{figures/murmur-commitment-evidence.pdf}
-\caption{Evidence and resource backing for one commitment. Horizontal arrows labelled ``Pins point from a citing record to its exact referenced content, identified by URI and CID. Amber denotes commercial records, blue denotes authority evidence and white denotes resource ledgers. Vertical arrows identify required authority evidence. Dashed links pair acceptance with buyer reservation and confirmation with seller allocation in their respective local transactions. Authority receipts are assertions by trusted gateways, not proofs of honest accounting. Closure is an alternative terminal decision for the same revision; it allocates no inventory and permits release only after verification. These links express the proposed method, not a global atomic transaction.}
+\includegraphics[width=\textwidth]{figures/talea-commitment-evidence.pdf}
+\caption{Evidence and resource backing for one commitment. Horizontal arrows labelled ``Pins'' point from a citing record to its exact referenced content, identified by URI and CID. Amber denotes commercial records, blue denotes authority evidence and white denotes resource ledgers. Vertical arrows identify required authority evidence. Dashed links pair acceptance with buyer reservation and confirmation with seller allocation in their respective local transactions. Authority receipts are assertions by trusted gateways, not proofs of honest accounting. Closure is an alternative terminal decision for the same revision; it allocates no inventory and permits release only after verification. These links express the proposed method, not a global atomic transaction.}
 \label{fig:method-evidence}
 \end{figure}
 
-\begin{algorithm}[t]
-\caption{Gateway admission, publication and buyer reconciliation}
-\label{alg:method-admission}
-\KwIn{authenticated caller, action, offer $o$, deal revision $(d,v)$}
-\KwState{authoritative policy and resource ledgers; durable action and terminal slots; buyer state; publication outbox}
-\textbf{Admission at the acting organisation}\;
-Resolve the caller's permitted signer; reject identity mismatch or malformed references\;
-Begin a serialisable local transaction\;
-\If{this action already has a durable outcome}{return the stored outcome without another resource update\;}
-Verify the profile, exact terms, action authority and permitted release\;
-\uIf{action is acceptance}{
-Reject if buyer state is closed or committed\;
-Check Eq.~\ref{eq:method-budget}; reject if admission fails\;
-Reserve $E(o)$; set buyer state to reserved; store acceptance and authority receipt\;
-}
-\uElseIf{action is confirmation}{
-Verify acceptance, exact offer binding and buyer authority evidence\;
-\If{a seller terminal decision already exists}{return that decision\;}
-\uIf{deadline permits confirmation and Eq.~\ref{eq:method-stock} holds}{
-Allocate inventory; store confirmation in the terminal slot\;
-}\Else{store closure in the terminal slot\;}
-}
-\uElseIf{action is closure}{
-\If{a seller terminal decision already exists}{return that decision\;}
-Store closure in the terminal slot; allocate no inventory\;
-}\Else{abort and reject\;}
-Store exact publication bytes and a stable record key in the outbox; commit\;
-\textbf{Publication worker:} publish stored bytes; on retry, verify existing content at the same key; escalate conflicts\;
-\BlankLine
-\textbf{On receipt of a seller terminal record at the buyer}\;
-Verify signer, deal, revision and required reference bindings\;
-Begin a serialisable local transaction\;
-\If{this terminal outcome is already applied}{return without accounting changes\;}
-\uIf{record confirms and buyer state is reserved}{
-Atomically move $E(o)$ from reserved to committed exposure; set state to committed\;
-}
-\uElseIf{record closes and buyer state is unseen or reserved}{
-Release any reservation; set state to closed, preventing later acceptance\;
-}\Else{retain current accounting; quarantine the inconsistent outcome\;}
-For a consistent outcome, persist its reconciliation marker with the state change; commit\;
-\textbf{Timeout:} retain reservation and query the terminal outcome; silence releases no funds\;
-\end{algorithm}
 
 The buyer retains its reservation until it learns the terminal outcome. Passing the seller's decision deadline does not establish closure: a confirmation may already exist but be delayed in transit. The seller may close an undecided revision after expiry, but the buyer releases funds only after verifying the seller's closure for that revision. A recovery service may retrieve this evidence; independent third-party cancellation or release is outside the specified protocol. This choice preserves backing for an unresolved obligation at the cost of blocking during a partition~\citep{graylamport2006}. Superseding an offer likewise cannot cancel an acceptance already in transit without resolving its original revision.
 
 \subsection{Safety properties of the initial commitment}
 
-The following propositions concern initial deal revisions with fixed, non-negative exposure. They assume authenticated records, trusted gateways, durable serialisable ledgers, and enforcement by every writer of the controlled resources. Budget $B$ is fixed during the trace. Each revision has one durable buyer state, either unseen, reserved, committed or closed. Reconciliation atomically updates this state and its accounting entries. A verified closure received before acceptance records a closed state and prevents subsequent acceptance of that revision; repeated messages do not change an already reconciled state. Amendments, settlement, loss of durable state and third-party cancellation are outside these proofs.
-
-\begin{proposition}[Budget preservation]
-\label{prop:budget-safety}
-Let $U=C+\sum_{r\in R}E(r)$ denote accounted exposure. If $U\leq B$ initially, and every acceptance is admitted atomically only when $U+E(o)\leq B$, then $U\leq B$ after every transition of the initial-commitment protocol.
-\end{proposition}
-\begin{proof}
-Proceed by induction over the serialised buyer transitions. An admitted acceptance adds $E(o)$ to the reserved exposure only after checking the bound. Confirmation reconciliation removes that amount from reservations and adds the same amount to committed exposure, leaving $U$ unchanged. Closure reconciliation removes a non-negative reservation. A closure recorded before acceptance changes no exposure and prevents later acceptance. Publication, timeout and repeated delivery change neither accounting entry. Each transition therefore preserves the bound, completing the induction.
-\end{proof}
-
-\begin{proposition}[Exclusive terminal decision]
-\label{prop:terminal-exclusivity}
-If the seller admits confirmation or closure only by an atomic transition of the same durable decision slot from undecided to a terminal state, and terminal states are irreversible, then one revision cannot have both an admitted confirmation and an admitted closure.
-\end{proposition}
-\begin{proof}
-Serialisability orders competing attempts on the slot. The first successful transition replaces undecided with one terminal state. Every subsequent attempt observes a terminal state and returns the existing decision without replacing it. Thus the other terminal transition cannot succeed. Publication retries reproduce the stored decision and introduce no additional transition.
-\end{proof}
-
-\begin{proposition}[Backing during delayed communication]
-\label{prop:reservation-backing}
-Suppose the buyer durably reserves $E(o)$ before publishing acceptance, the seller confirms only that exact accepted revision, and the buyer releases the reservation only on verified seller closure. During the initial-commitment lifecycle, every seller-confirmed revision retains its exposure in either the buyer's reservation or its committed accounting entry, despite message delay or duplication.
-\end{proposition}
-\begin{proof}
-Confirmation requires an acceptance whose publication follows durable reservation. By Proposition~\ref{prop:terminal-exclusivity}, a confirmed revision cannot also have a valid seller closure. The buyer therefore cannot take the release transition for that revision. Before confirmation is observed, the reservation remains; after atomic reconciliation, its value is transferred to committed exposure. Timeout and duplicate messages do not alter either conclusion. Backing is preserved, although an unavailable terminal record can prevent progress indefinitely.
-\end{proof}
+Under these rules the initial commitment has three conditional safety properties, stated and proved in \cref{app:safety}. Accounted exposure never exceeds the budget (Proposition~\ref{prop:budget-safety}). One revision cannot have both an admitted confirmation and an admitted closure (Proposition~\ref{prop:terminal-exclusivity}). Every seller-confirmed revision keeps its exposure in the buyer's reservation or its committed accounting entry, despite message delay or duplication (Proposition~\ref{prop:reservation-backing}). All three assume authenticated records, trusted gateways, durable serialisable ledgers and enforcement by every writer of the controlled resources. Amendments, settlement, loss of durable state and third-party cancellation are outside them. Algorithm~\ref{alg:method-admission} in the same appendix gives the admission, publication and reconciliation procedure in full.
 
 These are conditional invariants of familiar transaction mechanisms, not new guarantees supplied by AT Protocol. A gateway implementation must enforce the assumed transitions, and the finite checks in Section~\ref{sec:research-agenda} cover only their stated abstraction. Testing H1 additionally requires varying the coordination design while holding these controls constant.
 
@@ -168,7 +102,7 @@ Local resource decisions and remote publication are separate operations. A durab
 
 Externally effective fulfilment or payment is authorised from durable confirmed state and carries an operation identifier containing the deal, revision and action. Downstream systems must suppress duplicates or expose an identifier that permits reconciliation. A2A task identifiers and repository replication alone do not establish exactly-once effects. Amendments refer to an existing commitment and require a new confirmed revision; fulfilment and settlement remain distinct from commitment.
 
-For multi-party operation, Murmur requires ownership-gated dispatch: each bridge acts only for agents operated by its organisation, although several bridges may observe the same public mention. This rule is proposed, not implemented in the sandbox, and does not by itself prevent duplicate dispatch by replicas within one organisation. Bridge high availability therefore requires a separate deduplication mechanism. For participants publishing at both public and private levels, the design uses a separate identity at each level. An approved public sub-request starts a new public thread rather than referencing its private parent; the orchestrator retains the correlation privately. Reconstruction is consequently limited by each participant's authorised view, rather than exposing a complete cross-level history.
+For multi-party operation, Talea requires ownership-gated dispatch: each bridge acts only for agents operated by its organisation, although several bridges may observe the same public mention. This rule is proposed, not implemented in the sandbox, and does not by itself prevent duplicate dispatch by replicas within one organisation. Bridge high availability therefore requires a separate deduplication mechanism. For participants publishing at both public and private levels, the design uses a separate identity at each level. An approved public sub-request starts a new public thread rather than referencing its private parent. The orchestrator records the correlation as a signed record at the private level, whose strong references point to the threads it opened. References run from the private level outward and never the reverse, so the public threads carry no trace of it. The sandbox does not implement this record. Reconstruction is consequently limited by each participant's authorised view, rather than exposing a complete cross-level history.
 
 Commercial records are exchanged through a restricted deal channel. Access enforcement must cover record reads, exports, blobs, relay streams and derived indexes, rather than only relay crawl selection. A counterparty authorised to read an offer is not necessarily authorised to read the private information used to construct it. We therefore separate a private planner from an outbound emissary and place a deterministic release interface between them, following the distinction between access and declassification~\citep{myers1997,robustdecl}. Neither agent holds unrestricted commercial signing authority.
 
@@ -181,7 +115,7 @@ where $D_{\pi}$ constructs the permitted values and $p$ is the agreed message pr
 
 \subsection{Execution options and evidence boundary}
 
-Agent Substrate is a possible runtime for the A2A services, rather than a replacement for the coordination record. A proposed adapter would map an authenticated agent identity to a Substrate actor and route the task through its ingress for resumption and execution~\citep{substrateoverview,substratearchitecture}. Signing, resource accounting and operation identifiers must remain outside rollback-prone actor snapshots, and resumed execution must reconcile with the current durable decision. Authentication, timeout, cancellation and retry behaviour require integration tests; no combined deployment is reported here.
+Agent Substrate is a possible runtime for the A2A services, rather than a replacement for the coordination record. A proposed adapter would map an authenticated agent identity to a Substrate actor and route the task through its ingress for resumption and execution~\citep{substrateoverview,substratearchitecture}. Signing, resource accounting and operation identifiers must remain outside rollback-prone actor snapshots, and resumed execution must reconcile with the current durable decision. Authentication, timeout, cancellation and retry behaviour require integration tests; no combined deployment is reported here. \Cref{tab:method-status} separates what the sandbox implements from what the method proposes.
 
 \begin{table}[htbp]
 \centering\small
@@ -202,4 +136,4 @@ Substrate execution & Proposed adapter & Resume, retries and external-effect rec
 \end{tabularx}
 \end{table}
 
-The method connects three decisions that conversation history alone leaves separate: which terms were accepted, under whose authority, and against which resources. The existing sandbox supplies the published coordination path. The remaining components specify the enforcement and recovery rules needed to use that path for A2B commitments. Establishing their effectiveness requires implementation and testing across independent organisations, with the same authority, reservation and retention controls held constant in any transport comparison.
+The method connects three decisions that conversation history alone leaves separate: which terms were accepted, under whose authority, and against which resources. The existing sandbox supplies the published coordination path. The remaining components specify the enforcement and recovery rules needed to use that path for A2B commitments. \Cref{sec:example} runs those rules on a case, first with one counterparty and then with three, to find where the design holds and where it stops.

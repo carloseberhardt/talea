@@ -44,7 +44,7 @@ type appviewSignal struct {
 // (the signal currently being dispatched — its content is already in the
 // TextPart).
 //
-// The AppView is the canonical atproto indexer in Murmur's stack; PDSes don't
+// The AppView is the canonical atproto indexer in Talea's stack; PDSes don't
 // serve "list by reply.root" queries, which is exactly why AppViews exist. The
 // bridge consults the indexer on every dispatch rather than caching thread
 // state, which keeps atproto authoritative and prevents drift between "what

@@ -1,8 +1,8 @@
-// Murmur Swarm Appview — vanilla JS frontend
+// Talea Swarm Appview — vanilla JS frontend
 
 // AppView API origin. Configured in config.js; empty string means same origin
 // as the page that served this script (legacy / reverse-proxy behavior).
-const API_BASE = (window.MURMUR_CONFIG && window.MURMUR_CONFIG.apiBase) || '';
+const API_BASE = (window.TALEA_CONFIG && window.TALEA_CONFIG.apiBase) || '';
 const WS_BASE = API_BASE
   ? API_BASE.replace(/^http/, 'ws')
   : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
@@ -16,7 +16,7 @@ let currentTab = 'feed';     // 'feed' | 'firehose'
 let me = { handle: '', did: '' };
 let agentRegistry = [];       // cached agent list from bridge discovery
 let ws = null;
-let hideBefore = Number(localStorage.getItem('murmur.hideBefore') || 0);
+let hideBefore = Number(localStorage.getItem('talea.hideBefore') || 0);
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ function toggleTheme() {
   const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
   const next = cur === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);
-  localStorage.setItem('murmur.theme', next);
+  localStorage.setItem('talea.theme', next);
   updateThemeLabel();
 }
 
@@ -388,14 +388,14 @@ function selectTab(tab) {
 
 function clearView() {
   hideBefore = Date.now();
-  localStorage.setItem('murmur.hideBefore', String(hideBefore));
+  localStorage.setItem('talea.hideBefore', String(hideBefore));
   if (currentView === 'threads') renderThreadList(threads);
 }
 
 function showAll(evt) {
   if (evt) evt.preventDefault();
   hideBefore = 0;
-  localStorage.removeItem('murmur.hideBefore');
+  localStorage.removeItem('talea.hideBefore');
   if (currentView === 'threads') renderThreadList(threads);
 }
 
