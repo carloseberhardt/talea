@@ -1,0 +1,73 @@
+\section{Admission procedure and safety properties}
+\label{app:safety}
+
+This appendix gives the gateway procedure and the three safety properties summarised in \cref{sec:method}. The symbols are those of \cref{eq:method-budget,eq:method-stock}.
+
+\begin{algorithm}[t]
+\caption{Gateway admission, publication and buyer reconciliation}
+\label{alg:method-admission}
+\KwIn{authenticated caller, action, offer $o$, deal revision $(d,v)$}
+\KwState{authoritative policy and resource ledgers; durable action and terminal slots; buyer state; publication outbox}
+\textbf{Admission at the acting organisation}\;
+Resolve the caller's permitted signer; reject identity mismatch or malformed references\;
+Begin a serialisable local transaction\;
+\If{this action already has a durable outcome}{return the stored outcome without another resource update\;}
+Verify the profile, exact terms, action authority and permitted release\;
+\uIf{action is acceptance}{
+Reject if buyer state is closed or committed\;
+Check Eq.~\ref{eq:method-budget}; reject if admission fails\;
+Reserve $E(o)$; set buyer state to reserved; store acceptance and authority receipt\;
+}
+\uElseIf{action is confirmation}{
+Verify acceptance, exact offer binding and buyer authority evidence\;
+\If{a seller terminal decision already exists}{return that decision\;}
+\uIf{deadline permits confirmation and Eq.~\ref{eq:method-stock} holds}{
+Allocate inventory; store confirmation in the terminal slot\;
+}\Else{store closure in the terminal slot\;}
+}
+\uElseIf{action is closure}{
+\If{a seller terminal decision already exists}{return that decision\;}
+Store closure in the terminal slot; allocate no inventory\;
+}\Else{abort and reject\;}
+Store exact publication bytes and a stable record key in the outbox; commit\;
+\textbf{Publication worker:} publish stored bytes; on retry, verify existing content at the same key; escalate conflicts\;
+\BlankLine
+\textbf{On receipt of a seller terminal record at the buyer}\;
+Verify signer, deal, revision and required reference bindings\;
+Begin a serialisable local transaction\;
+\If{this terminal outcome is already applied}{return without accounting changes\;}
+\uIf{record confirms and buyer state is reserved}{
+Atomically move $E(o)$ from reserved to committed exposure; set state to committed\;
+}
+\uElseIf{record closes and buyer state is unseen or reserved}{
+Release any reservation; set state to closed, preventing later acceptance\;
+}\Else{retain current accounting; quarantine the inconsistent outcome\;}
+For a consistent outcome, persist its reconciliation marker with the state change; commit\;
+\textbf{Timeout:} retain reservation and query the terminal outcome; silence releases no funds\;
+\end{algorithm}
+
+The following propositions concern initial deal revisions with fixed, non-negative exposure. They assume authenticated records, trusted gateways, durable serialisable ledgers, and enforcement by every writer of the controlled resources. Budget $B$ is fixed during the trace. Each revision has one durable buyer state, either unseen, reserved, committed or closed. Reconciliation atomically updates this state and its accounting entries. A verified closure received before acceptance records a closed state and prevents subsequent acceptance of that revision; repeated messages do not change an already reconciled state. Amendments, settlement, loss of durable state and third-party cancellation are outside these proofs.
+
+\begin{proposition}[Budget preservation]
+\label{prop:budget-safety}
+Let $U=C+\sum_{r\in R}E(r)$ denote accounted exposure. If $U\leq B$ initially, and every acceptance is admitted atomically only when $U+E(o)\leq B$, then $U\leq B$ after every transition of the initial-commitment protocol.
+\end{proposition}
+\begin{proof}
+Proceed by induction over the serialised buyer transitions. An admitted acceptance adds $E(o)$ to the reserved exposure only after checking the bound. Confirmation reconciliation removes that amount from reservations and adds the same amount to committed exposure, leaving $U$ unchanged. Closure reconciliation removes a non-negative reservation. A closure recorded before acceptance changes no exposure and prevents later acceptance. Publication, timeout and repeated delivery change neither accounting entry. Each transition therefore preserves the bound, completing the induction.
+\end{proof}
+
+\begin{proposition}[Exclusive terminal decision]
+\label{prop:terminal-exclusivity}
+If the seller admits confirmation or closure only by an atomic transition of the same durable decision slot from undecided to a terminal state, and terminal states are irreversible, then one revision cannot have both an admitted confirmation and an admitted closure.
+\end{proposition}
+\begin{proof}
+Serialisability orders competing attempts on the slot. The first successful transition replaces undecided with one terminal state. Every subsequent attempt observes a terminal state and returns the existing decision without replacing it. Thus the other terminal transition cannot succeed. Publication retries reproduce the stored decision and introduce no additional transition.
+\end{proof}
+
+\begin{proposition}[Backing during delayed communication]
+\label{prop:reservation-backing}
+Suppose the buyer durably reserves $E(o)$ before publishing acceptance, the seller confirms only that exact accepted revision, and the buyer releases the reservation only on verified seller closure. During the initial-commitment lifecycle, every seller-confirmed revision retains its exposure in either the buyer's reservation or its committed accounting entry, despite message delay or duplication.
+\end{proposition}
+\begin{proof}
+Confirmation requires an acceptance whose publication follows durable reservation. By Proposition~\ref{prop:terminal-exclusivity}, a confirmed revision cannot also have a valid seller closure. The buyer therefore cannot take the release transition for that revision. Before confirmation is observed, the reservation remains; after atomic reconciliation, its value is transferred to committed exposure. Timeout and duplicate messages do not alter either conclusion. Backing is preserved, although an unavailable terminal record can prevent progress indefinitely.
+\end{proof}
