@@ -1,15 +1,15 @@
-// Murmur CLI — post and read swarm signals against a local PDS.
+// Talea CLI — post and read swarm signals against a local PDS.
 //
 // Auth via env vars (with sandbox-friendly defaults):
-//   MURMUR_PDS_URL    default: https://pds.murmur.internal
-//   MURMUR_HANDLE     default: carlos.test
-//   MURMUR_PASSWORD   default: carlos-sandbox-pass
+//   TALEA_PDS_URL    default: https://pds.talea.internal
+//   TALEA_HANDLE     default: carlos.test
+//   TALEA_PASSWORD   default: carlos-sandbox-pass
 //
 // Subcommands:
-//   murmur post "<text>" [--mention handle] [--type request|observation|...]
-//   murmur thread <signal-uri>
-//   murmur agents
-//   murmur whoami
+//   talea post "<text>" [--mention handle] [--type request|observation|...]
+//   talea thread <signal-uri>
+//   talea agents
+//   talea whoami
 package main
 
 import (
@@ -40,9 +40,9 @@ type config struct {
 
 func loadConfig() config {
 	return config{
-		PDSURL:   envOr("MURMUR_PDS_URL", "https://pds.murmur.internal"),
-		Handle:   envOr("MURMUR_HANDLE", "carlos.test"),
-		Password: envOr("MURMUR_PASSWORD", "carlos-sandbox-pass"),
+		PDSURL:   envOr("TALEA_PDS_URL", "https://pds.talea.internal"),
+		Handle:   envOr("TALEA_HANDLE", "carlos.test"),
+		Password: envOr("TALEA_PASSWORD", "carlos-sandbox-pass"),
 	}
 }
 
@@ -286,7 +286,7 @@ func cmdPost(args []string) int {
 	}
 
 	if content == "" {
-		fmt.Fprintln(os.Stderr, "usage: murmur post \"<text>\" [--mention handle] [--type request|observation|...]")
+		fmt.Fprintln(os.Stderr, "usage: talea post \"<text>\" [--mention handle] [--type request|observation|...]")
 		return 1
 	}
 
@@ -384,7 +384,7 @@ func cmdReply(args []string) int {
 	}
 
 	if parentURI == "" || content == "" {
-		fmt.Fprintln(os.Stderr, "usage: murmur reply <parent-uri> \"<text>\" [--mention handle] [--type ...]")
+		fmt.Fprintln(os.Stderr, "usage: talea reply <parent-uri> \"<text>\" [--mention handle] [--type ...]")
 		return 1
 	}
 
@@ -483,7 +483,7 @@ func cmdReply(args []string) int {
 
 func cmdThread(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: murmur thread <signal-uri>")
+		fmt.Fprintln(os.Stderr, "usage: talea thread <signal-uri>")
 		return 1
 	}
 	target := args[0]
@@ -711,7 +711,7 @@ func cmdAgents(args []string) int {
 // ─── Subcommand: publish-profile ──────────────────────────────
 
 // profileEntry is the JSON shape for a single profile manifest entry.
-// Password is optional — falls back to MURMUR_PASSWORD env or sandbox
+// Password is optional — falls back to TALEA_PASSWORD env or sandbox
 // convention when empty. The Endpoint/A2AEndpoint pair lets the manifest
 // use either key name.
 type profileEntry struct {
@@ -802,7 +802,7 @@ func cmdPublishProfile(args []string) int {
 		}
 	} else {
 		if handle == "" {
-			handle = os.Getenv("MURMUR_HANDLE")
+			handle = os.Getenv("TALEA_HANDLE")
 		}
 		if handle == "" || name == "" || description == "" || endpoint == "" {
 			fmt.Fprintln(os.Stderr, publishProfileUsage)
@@ -817,7 +817,7 @@ func cmdPublishProfile(args []string) int {
 		}}
 	}
 
-	pdsURL := envOr("MURMUR_PDS_URL", "https://pds.murmur.internal")
+	pdsURL := envOr("TALEA_PDS_URL", "https://pds.talea.internal")
 	failures := 0
 
 	for _, e := range entries {
@@ -836,7 +836,7 @@ func cmdPublishProfile(args []string) int {
 
 		pwd := e.Password
 		if pwd == "" {
-			pwd = os.Getenv("MURMUR_PASSWORD")
+			pwd = os.Getenv("TALEA_PASSWORD")
 		}
 		if pwd == "" {
 			pwd = sandboxPassword(e.Handle)
@@ -920,15 +920,15 @@ func sandboxPassword(handle string) string {
 }
 
 const publishProfileUsage = `usage:
-  murmur publish-profile --handle <h> --name "<n>" --description "<d>" --endpoint <url> [--password <p>]
-  murmur publish-profile --file <path>
+  talea publish-profile --handle <h> --name "<n>" --description "<d>" --endpoint <url> [--password <p>]
+  talea publish-profile --file <path>
 
   Single-profile flags (mutually exclusive with --file):
-    --handle       Agent handle (or MURMUR_HANDLE env). Profile is written to this account's repo.
+    --handle       Agent handle (or TALEA_HANDLE env). Profile is written to this account's repo.
     --name         Display name for the agent.
     --description  One-line description (also --desc).
     --endpoint     A2A endpoint URL (also --a2a-endpoint).
-    --password     PDS password (or MURMUR_PASSWORD env). Falls back to sandbox convention.
+    --password     PDS password (or TALEA_PASSWORD env). Falls back to sandbox convention.
 
   Manifest mode:
     --file         JSON file with one profile object or an array of profile objects.
@@ -952,7 +952,7 @@ func cmdWhoami(args []string) int {
 // ─── main ─────────────────────────────────────────────────────
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, `usage: murmur <command> [args]
+	fmt.Fprintln(os.Stderr, `usage: talea <command> [args]
 
 commands:
   post "<text>" [--mention handle] [--type request|observation|...]
@@ -973,15 +973,15 @@ commands:
   publish-profile --handle <handle> --name "<name>" --description "<text>" --endpoint <url>
       Publish (or rewrite) an agent's community.swarm.agent.profile record at
       rkey="self". Authenticates as the agent itself; password derives from
-      the sandbox convention if --password and MURMUR_PASSWORD are unset.
+      the sandbox convention if --password and TALEA_PASSWORD are unset.
 
   whoami
       Show the configured identity and PDS URL.
 
 env vars (with sandbox defaults):
-  MURMUR_PDS_URL    default: https://pds.murmur.internal
-  MURMUR_HANDLE     default: carlos.test
-  MURMUR_PASSWORD   default: carlos-sandbox-pass
+  TALEA_PDS_URL    default: https://pds.talea.internal
+  TALEA_HANDLE     default: carlos.test
+  TALEA_PASSWORD   default: carlos-sandbox-pass
 `)
 }
 

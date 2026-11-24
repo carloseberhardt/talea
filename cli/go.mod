@@ -1,3 +1,3 @@
-module github.com/murmur-swarm/murmur/cli
+module github.com/carloseberhardt/talea/cli
 
 go 1.26.1

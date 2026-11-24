@@ -48,17 +48,17 @@ create_account() {
 }
 
 # Human account
-create_account "carlos.test" "carlos@murmur.dev" "carlos-sandbox-pass"
+create_account "carlos.test" "carlos@talea.dev" "carlos-sandbox-pass"
 
 # Agent accounts
-create_account "agent-one.test" "agent-one@murmur.dev" "agent-one-sandbox-pass"
-create_account "triage-one.test" "triage-one@murmur.dev" "triage-one-sandbox-pass"
-create_account "weather-one.test" "weather-one@murmur.dev" "weather-one-sandbox-pass"
-create_account "orchestrator.test" "orchestrator@murmur.dev" "orchestrator-sandbox-pass"
-create_account "threeaday-one.test" "threeaday-one@murmur.dev" "threeaday-one-sandbox-pass"
+create_account "agent-one.test" "agent-one@talea.dev" "agent-one-sandbox-pass"
+create_account "triage-one.test" "triage-one@talea.dev" "triage-one-sandbox-pass"
+create_account "weather-one.test" "weather-one@talea.dev" "weather-one-sandbox-pass"
+create_account "orchestrator.test" "orchestrator@talea.dev" "orchestrator-sandbox-pass"
+create_account "threeaday-one.test" "threeaday-one@talea.dev" "threeaday-one-sandbox-pass"
 
 # Bridge account (infrastructure — publishes routing signals and results)
-create_account "bridge.test" "bridge@murmur.dev" "bridge-sandbox-pass"
+create_account "bridge.test" "bridge@talea.dev" "bridge-sandbox-pass"
 
 echo ""
 echo "Accounts created."

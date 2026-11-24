@@ -35,7 +35,7 @@ Single machine, using the existing PDS + caddy + relay:
 2. **Host the DID doc** at `https://<domain>/.well-known/did.json` (via caddy), containing:
    - `id`: `did:web:<domain>`
    - `verificationMethod`: `#atproto` → the reserved signing key (Multikey)
-   - `service`: `#atproto_pds` → `https://pds.murmur.internal`
+   - `service`: `#atproto_pds` → `https://pds.talea.internal`
    - `alsoKnownAs`: `at://<handle>`
 3. **Create the account** with the existing DID: `com.atproto.server.createAccount` supplying `did: did:web:<domain>` + handle + password + an **offline service-auth token** proving control. Practical tooling: `goat account create` (see bnewbold's guide; `goat account service-auth-offline` for the token).
 4. **Activate** the account (it lands `deactivated`): `com.atproto.server.activateAccount`.

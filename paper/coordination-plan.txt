@@ -1,5 +1,5 @@
 Plan for the next section
-\section{Murmur coordination}
+\section{Talea coordination}
 \label{sec:coordination}
 
 Purpose and central claim
@@ -37,15 +37,15 @@ Specify the existing dispatch sequence only after checking code: consume event; 
 Explain bridge custody of agent credentials and the difference between record attribution and authorisation of the caller requesting publication. Check the actual fallback behaviour. The commercial extension must bind caller identity to a permitted signing account, reject unintended identity fallback and enforce action policy. Do not claim that the current handler provides these controls merely because it has a valid session.
 
 5. Optional execution on Agent Substrate (about 200 words)
-Introduce an explicitly proposed adapter between the bridge's A2A dispatch and a Substrate-hosted A2A service. The documentation describes target routing via ate-target-actor (<atespace>/<actor>) and actor resumption. Use an authenticated mapping from Murmur identity to actor, rather than trusting caller-selected routing metadata.
-Proposed path: Murmur thread -> bridge -> adapter -> Substrate ingress -> A2A actor -> response -> bridge publication.
+Introduce an explicitly proposed adapter between the bridge's A2A dispatch and a Substrate-hosted A2A service. The documentation describes target routing via ate-target-actor (<atespace>/<actor>) and actor resumption. Use an authenticated mapping from Talea identity to actor, rather than trusting caller-selected routing metadata.
+Proposed path: Talea thread -> bridge -> adapter -> Substrate ingress -> A2A actor -> response -> bridge publication.
 Resolve endpoint discovery, caller authorisation, timeouts, streaming/task status, cancellation and retries. Snapshot restoration can return an agent to older local state after an external action. Keep signing, resource accounting and operation identifiers outside rollback-prone snapshots; reconcile on resume. This is an integration design, not a demonstrated property of either combined system.
 The documentation describes network policy at WorkerPool scope. Planner/emissary isolation may therefore require appropriately separated pools and explicit policies; do not assume per-actor routing supplies information-flow security. An authorised message can still leak a secret.
 
 6. Evidence and boundary (about 150 words)
 Table columns: capability, observed or specified status, evidence, untested condition.
 Rows: published routing and A2A execution; thread reconstruction/restart; bridge identity handling; independent organisation deployment; commercial controls; Substrate integration.
-Only the sandbox coordination is described as existing. Privacy controls, high availability and cross-organisation behaviour need their own evidence. No throughput, latency or cost claims imported from Substrate's README as Murmur results.
+Only the sandbox coordination is described as existing. Privacy controls, high availability and cross-organisation behaviour need their own evidence. No throughput, latency or cost claims imported from Substrate's README as Talea results.
 
 Transition to the A2B method
 A thread records the work and the dependencies among published messages. The next section must define when a recorded proposal becomes an authorised commitment and which resources that decision consumes.

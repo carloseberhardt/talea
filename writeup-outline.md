@@ -1,4 +1,4 @@
-# Murmur Writeup — Outline
+# Talea Writeup — Outline
 
 This is a working outline, not a draft. The point is to see the shape and find
 out where it bends before writing prose. Sections are sized in rough words to
@@ -8,7 +8,7 @@ breathe, short enough to actually finish.
 ## Title options
 
 - *When agents do the work, the wires have to change* — provocative, frames it as forward-looking infrastructure essay
-- *Murmur: agents as social peers on a federated substrate* — descriptive, signals it's a case study
+- *Talea: agents as social peers on a federated substrate* — descriptive, signals it's a case study
 - *What an agent-native B2B substrate might look like (and where it bends)* — the most honest about the speculation
 - *The substrate problem in agent-mediated work* — academic-y, signals "argument piece"
 
@@ -38,7 +38,7 @@ load-bearing — and here's the structural reason"* = rigorous, make it teeth-fi
 
 ## 1. Opening (~400 words)
 
-**Purpose:** Frame the question. Get the reader to care without leading with atproto or murmur.
+**Purpose:** Frame the question. Get the reader to care without leading with atproto or talea.
 
 **Move:** Open on the shift. Today's B2B is API-mediated and the integration tax
 is brutal because every pair negotiates everything bilaterally — schemas, auth,
@@ -219,7 +219,7 @@ The AGCO / financial / weather / stock-price example, end to end. Show:
 4. Ownership-gated dispatch is what makes a shared firehose safe
 5. Thread refs can't cross the privacy boundary; correlation happens internally; audit is per-level, not global
 
-**Material:** flow.md is essentially this section in seed form. Tighten the prose; drop the "what murmur would need to build" list (move to section 8); keep the trace and the table.
+**Material:** flow.md is essentially this section in seed form. Tighten the prose; drop the "what talea would need to build" list (move to section 8); keep the trace and the table.
 
 ## 7. The hard part: declassification (~1700 words) — *the centerpiece*
 
@@ -293,7 +293,7 @@ costs.
 
 1. **One audience or two?** I've structured for both forward-looking B2B *and* present-day compliance readers. They want the same essay; they recognize themselves at different points. Is that right, or do you want to pick one as primary?
 2. **How much prior atproto knowledge to assume?** Section 3 is short if the reader knows it; longer if not. Inclined to assume *some* familiarity — link to the README primer rather than rebuild it.
-3. **Diagrams.** Plan for ~3: (a) the two-layer model (atproto coordination + A2A execution), (b) the murmur architecture (PDS/relay/AppView/bridge/agents), (c) the three-user topology from flow.md. Worth investing in good ones; this kind of essay lives or dies on whether the reader can hold the picture.
+3. **Diagrams.** Plan for ~3: (a) the two-layer model (atproto coordination + A2A execution), (b) the talea architecture (PDS/relay/AppView/bridge/agents), (c) the three-user topology from flow.md. Worth investing in good ones; this kind of essay lives or dies on whether the reader can hold the picture.
 4. **Voice.** *"We"* (the experimenter — natural for a research log) vs. *"I"* (closer to a personal essay). I'd default to *"we"* — feels right for the technical content even if it's just you.
 5. **Length tolerance.** 5–8k words is a real essay. Do you want shorter (4k, blog-post tight) — would mean cutting depth in sections 5 and 7 and dropping section 3? Longer (10k+, full design doc) would let you go deeper on the declassification mitigations and add more multi-party scenarios.
 6. **Publication shape.** Personal blog post? Submitted somewhere? Just a doc you hand to two friends? Different shapes want different framing energy.

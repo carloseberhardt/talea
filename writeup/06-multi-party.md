@@ -2,7 +2,7 @@
 
 > **Draft status:** first prose draft. Target ~1,400 words. Compresses
 > `flow.md` (setup, trace, who-saw-what, takeaways); the declassification
-> material stays in section 7, and the "what murmur would need to build" list
+> material stays in section 7, and the "what talea would need to build" list
 > lands in section 8's open problems. Assumes [Figure 3: three-user topology]
 > near the setup.
 
@@ -34,7 +34,7 @@ the firehose is unauthenticated: `U1-priv` stays private only because it is
 network-unreachable from Relay-2 and Relay-3 — a firewall rule, not an
 access-control list.
 
-Two rules carry the design, and neither exists in murmur today:
+Two rules carry the design, and neither exists in talea today:
 
 1. **Ownership-gated dispatch.** A bridge dispatches only to agents it owns.
    Every bridge sees every public mention; only the owner's bridge acts.

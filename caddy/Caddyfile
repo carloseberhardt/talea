@@ -1,4 +1,4 @@
-pds.murmur.internal {
-	tls /certs/pds.murmur.internal.pem /certs/pds.murmur.internal-key.pem
+pds.talea.internal {
+	tls /certs/pds.talea.internal.pem /certs/pds.talea.internal-key.pem
 	reverse_proxy pds:2583
 }

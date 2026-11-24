@@ -88,14 +88,14 @@ func main() {
 	}
 
 	relayURL := envOrDefault("RELAY_URL", "ws://localhost:2470")
-	pdsURL := envOrDefault("PDS_URL", "https://pds.murmur.internal")
+	pdsURL := envOrDefault("PDS_URL", "https://pds.talea.internal")
 	appviewURL := envOrDefault("APPVIEW_URL", "http://localhost:2472")
 	plcURL := envOrDefault("PLC_URL", "http://localhost:2582")
 	bridgeHandle := envOrDefault("BRIDGE_HANDLE", "bridge.test")
 	bridgePassword := envOrDefault("BRIDGE_PASSWORD", "bridge-sandbox-pass")
 	discoveryAddr := envOrDefault("DISCOVERY_ADDR", ":2471")
 	cursorPath := envOrDefault("BRIDGE_CURSOR_PATH", "bridge.cursor")
-	agentCredsRaw := os.Getenv("MURMUR_AGENT_CREDS")
+	agentCredsRaw := os.Getenv("TALEA_AGENT_CREDS")
 
 	registry := NewAgentRegistry(logger)
 
@@ -126,7 +126,7 @@ func main() {
 	}
 
 	// Open PDS sessions for any agents whose credentials the bridge holds.
-	// MURMUR_AGENT_CREDS is a comma-separated list of `handle:password`
+	// TALEA_AGENT_CREDS is a comma-separated list of `handle:password`
 	// pairs. Each entry becomes a session in b.sessions, which the publish
 	// layer uses to sign records under the agent's identity instead of the
 	// bridge's. Missing/malformed entries log a warning and the bridge falls
@@ -137,7 +137,7 @@ func main() {
 	// account provisioning so credentials are derived from a single PDS
 	// admin secret rather than enumerated.
 	if agentCredsRaw == "" {
-		logger.Warn("MURMUR_AGENT_CREDS not set — all bridge-published signals will be authored by the bridge, not by agents")
+		logger.Warn("TALEA_AGENT_CREDS not set — all bridge-published signals will be authored by the bridge, not by agents")
 	} else {
 		for _, entry := range strings.Split(agentCredsRaw, ",") {
 			entry = strings.TrimSpace(entry)
@@ -146,7 +146,7 @@ func main() {
 			}
 			colon := strings.IndexByte(entry, ':')
 			if colon <= 0 {
-				logger.Warn("malformed MURMUR_AGENT_CREDS entry — expected handle:password", "entry", entry)
+				logger.Warn("malformed TALEA_AGENT_CREDS entry — expected handle:password", "entry", entry)
 				continue
 			}
 			handle := strings.TrimSpace(entry[:colon])
@@ -323,7 +323,7 @@ func (b *Bridge) consumeFirehose(ctx context.Context) error {
 		b.logger.Info("connecting to firehose", "url", urlStr, "retries", retries)
 
 		con, _, err := websocket.DefaultDialer.DialContext(ctx, urlStr, http.Header{
-			"User-Agent": []string{"murmur-bridge/0.1"},
+			"User-Agent": []string{"talea-bridge/0.1"},
 		})
 		if err != nil {
 			b.logger.Warn("firehose dial failed", "error", err, "retries", retries)

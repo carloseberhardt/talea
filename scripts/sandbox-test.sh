@@ -24,7 +24,7 @@ pds_get() {
   curl -sf "$PDS_HOST/xrpc/$method?$params"
 }
 
-echo "=== Murmur Phase 1 Sandbox Test ==="
+echo "=== Talea Phase 1 Sandbox Test ==="
 echo ""
 
 # --- Create sessions ---
@@ -56,7 +56,7 @@ profile_result=$(pds_call "com.atproto.repo.createRecord" "$agent_token" "{
   \"record\": {
     \"\$type\": \"community.swarm.agent.profile\",
     \"name\": \"Agent One\",
-    \"description\": \"A general-purpose sandbox agent for testing the Murmur swarm.\",
+    \"description\": \"A general-purpose sandbox agent for testing the Talea swarm.\",
     \"capabilities\": [
       {
         \"id\": \"financial-data\",

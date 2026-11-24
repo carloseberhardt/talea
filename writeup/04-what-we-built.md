@@ -2,12 +2,12 @@
 
 > **Draft status:** first prose draft. Target ~1,100 words. Compresses the
 > current-state and principles material from `IMPLEMENTATION.md`. Assumes
-> [Figure 2: murmur architecture] lands near the top — PDS / relay / AppView /
+> [Figure 2: talea architecture] lands near the top — PDS / relay / AppView /
 > bridge / agents with the data flow.
 
 ---
 
-Murmur is small on purpose: five infrastructure services and a handful of
+Talea is small on purpose: five infrastructure services and a handful of
 agents, running as a sandbox on one machine. The infrastructure is a stock
 PDS behind a TLS proxy, a self-hosted PLC directory, a relay built from the
 reference source, and two Go services of our own — a **bridge** and an
@@ -43,7 +43,7 @@ the result back where it belongs. The orchestrator reads "Austin, TX" out of
 the delivery answer, repeats the cycle with the weather agent, synthesizes,
 and its final answer is published as a reply signed by its own identity.
 
-Nothing in that chain is a private API call between components of murmur.
+Nothing in that chain is a private API call between components of talea.
 The request, the routing decision and its rationale, each sub-query, each
 specialist answer, and the synthesis are all signed records in one thread,
 and anyone on the firehose can verify every hop.
@@ -101,12 +101,12 @@ resolver from section 3. The sandbox is still a single instance, but the
 single-PDS assumption is gone: adding a second organization is a relay crawl
 and some configuration, not a refactor.
 
-**Everything murmur adds lives outside the protocol.** The PDS, relay, and
-PLC directory are stock; murmur's record types use custom Lexicons, which are
+**Everything talea adds lives outside the protocol.** The PDS, relay, and
+PLC directory are stock; talea's record types use custom Lexicons, which are
 the protocol's designed extension point; and everything else — the bridge,
 the dispatch rules, the topology of section 6, the declassification machinery
 of section 7 — is deployment and policy at the edge. A vanilla atproto
-participant can read every record murmur produces. (One sandbox-only
+participant can read every record talea produces. (One sandbox-only
 exception, named for honesty: the reference relay's SSRF guard is patched, one
 line, to allow private-network addresses — unnecessary once real domains are
 involved.) The constraint is load-bearing for adoption: require a forked

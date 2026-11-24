@@ -1,6 +1,6 @@
 # Animation plan — Remotion, tagless weather query
 
-A plan for a ~45 second animated trace of one signal through the Murmur stack,
+A plan for a ~45 second animated trace of one signal through the Talea stack,
 rendered with Remotion as an MP4 we can drop into a slide, embed in the writeup,
 or share standalone.
 
@@ -118,7 +118,7 @@ is for us to verify each term gets introduced exactly once.
 | Carlos types | 90–180 | Carlos posts via the Web UI — no @-mention. |
 | Write to PDS | 180–270 | His post becomes a signed **record** in his **repo** on the **PDS**. |
 | PDS → Relay | 270–360 | Each new record is a **commit**. The relay broadcasts every commit on a **firehose**. |
-| Relay fanout | 360–450 | Every Murmur service subscribes to the same firehose. |
+| Relay fanout | 360–450 | Every Talea service subscribes to the same firehose. |
 | Triage LLM | 450–600 | Triage reads it off the firehose and asks an LLM: who should answer? |
 | Triage publishes | 600–750 | Triage's routing decision is *also* a signed record. |
 | Bridge dispatches | 750–900 | The bridge looks up the agent's endpoint, then dispatches over **A2A** — the only non-firehose hop. |
@@ -165,7 +165,7 @@ who notice should be told.
 ## Project setup
 
 ```bash
-mkdir -p ~/projects/murmur-animation && cd ~/projects/murmur-animation
+mkdir -p ~/projects/talea-animation && cd ~/projects/talea-animation
 npx create-video@latest
 # choose: TypeScript, blank starter
 npm i           # if create-video doesn't do it

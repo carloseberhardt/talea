@@ -10,7 +10,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 )
 
-// threadContextExtensionURI identifies the Murmur thread-context A2A extension.
+// threadContextExtensionURI identifies the Talea thread-context A2A extension.
 // URI is the version: breaking changes mint /v2, /v3, etc.
 // See /home/carlose/Downloads/thread-context-extension-design.md §3.1.
 const threadContextExtensionURI = "https://swarm.community/extensions/thread-context/v1"

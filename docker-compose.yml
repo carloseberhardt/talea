@@ -43,7 +43,7 @@ services:
     networks:
       default:
         aliases:
-          - pds.murmur.internal
+          - pds.talea.internal
 
   # Personal Data Server
   pds:
@@ -75,7 +75,7 @@ services:
       RELAY_ADMIN_PASSWORD: relay-admin-dev
       RELAY_PLC_HOST: http://plc:2582
       RELAY_LOG_LEVEL: info
-      RELAY_TRUSTED_DOMAINS: "*.murmur.internal"
+      RELAY_TRUSTED_DOMAINS: "*.talea.internal"
       SSL_CERT_FILE: /certs/ca-bundle.pem
     volumes:
       - ./relay:/relay:ro

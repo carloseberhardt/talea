@@ -1,4 +1,4 @@
-module github.com/carlose/murmur/appview
+module github.com/carloseberhardt/talea/appview
 
 go 1.25
 

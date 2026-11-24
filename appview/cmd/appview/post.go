@@ -13,7 +13,7 @@ import (
 )
 
 // Poster manages PDS authentication and record creation on behalf of the human
-// user (MURMUR_HANDLE). Sessions auto-refresh on expiry: a stale token
+// user (TALEA_HANDLE). Sessions auto-refresh on expiry: a stale token
 // triggers a refreshSession call, falling back to a full createSession with
 // the original credentials if the refresh token is also expired.
 type Poster struct {

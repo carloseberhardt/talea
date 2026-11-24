@@ -1,8 +1,8 @@
-\section{Murmur coordination method}
+\section{Talea coordination method}
 \label{sec:method}
 \label{sec:coordination}
 
-Murmur is the apparatus of this study: a coordination layer that connects agent conversations to authorised, resource-backed business commitments. It represents interactions as linked records and uses A2A services to execute tasks. Within this method, agents propose terms and actions, whereas organisational gateways determine whether those actions are authorised and supported by available resources. The input is a request, the participating agents' identities and capabilities, and the relevant organisational policies. The output is a retained record of the interaction and, when the commercial checks succeed, a commitment linking exact terms to authority and resource decisions. The coordination mechanism exists as a single-operator sandbox. The gateways, commercial state machine and disclosure controls below are specified components of the method that remain to be implemented.
+Talea is the apparatus of this study: a coordination layer that connects agent conversations to authorised, resource-backed business commitments. It represents interactions as linked records and uses A2A services to execute tasks. Within this method, agents propose terms and actions, whereas organisational gateways determine whether those actions are authorised and supported by available resources. The input is a request, the participating agents' identities and capabilities, and the relevant organisational policies. The output is a retained record of the interaction and, when the commercial checks succeed, a commitment linking exact terms to authority and resource decisions. The coordination mechanism exists as a single-operator sandbox. The gateways, commercial state machine and disclosure controls below are specified components of the method that remain to be implemented.
 
 \subsection{Representing and executing a collaboration}
 
@@ -10,8 +10,8 @@ Three record families define the existing coordination model. A \texttt{communit
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=\textwidth]{figures/murmur-coordination.pdf}
-\caption{Implemented Murmur coordination path. Participants publish to a PDS; relay events reach triage, the AppView and bridge. Triage publishes routing records, the AppView supplies indexed context, and the bridge invokes A2A services and publishes responses or sub-requests. Blue denotes protocol infrastructure and amber denotes Murmur coordination services. The bridge holds publication credentials; this diagram does not imply implemented commercial authorisation.}
+\includegraphics[width=\textwidth]{figures/talea-coordination.pdf}
+\caption{Implemented Talea coordination path. Participants publish to a PDS; relay events reach triage, the AppView and bridge. Triage publishes routing records, the AppView supplies indexed context, and the bridge invokes A2A services and publishes responses or sub-requests. Blue denotes protocol infrastructure and amber denotes Talea coordination services. The bridge holds publication credentials; this diagram does not imply implemented commercial authorisation.}
 \label{fig:method-coordination}
 \end{figure}
 
@@ -40,8 +40,8 @@ Figure~\ref{fig:method-deployment} locates the proposed policy and resource cont
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=\textwidth]{figures/murmur-a2b-deployment.pdf}
-\caption{Proposed Murmur deployment for A2B. Private planners submit actions to organisational policy gateways. Approved decisions are committed to local resource ledgers and outboxes before publication to the restricted deal channel. Each party observes and verifies the published evidence. Public profiles support discovery separately. Blue identifies existing protocol components; amber identifies proposed enforcement or restricted deployment arrangements, not implemented confidentiality features of AT Protocol. A2A execution, omitted from this deployment view, uses separately authorised payloads and effect identifiers.}
+\includegraphics[width=\textwidth]{figures/talea-a2b-deployment.pdf}
+\caption{Proposed Talea deployment for A2B. Private planners submit actions to organisational policy gateways. Approved decisions are committed to local resource ledgers and outboxes before publication to the restricted deal channel. Each party observes and verifies the published evidence. Public profiles support discovery separately. Blue identifies existing protocol components; amber identifies proposed enforcement or restricted deployment arrangements, not implemented confidentiality features of AT Protocol. A2A execution, omitted from this deployment view, uses separately authorised payloads and effect identifiers.}
 \label{fig:method-deployment}
 \end{figure}
 
@@ -82,7 +82,7 @@ Figure~\ref{fig:method-evidence} specifies the evidence structure for an admitte
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=\textwidth]{figures/murmur-commitment-evidence.pdf}
+\includegraphics[width=\textwidth]{figures/talea-commitment-evidence.pdf}
 \caption{Evidence and resource backing for one commitment. Horizontal arrows labelled ``Pins point from a citing record to its exact referenced content, identified by URI and CID. Amber denotes commercial records, blue denotes authority evidence and white denotes resource ledgers. Vertical arrows identify required authority evidence. Dashed links pair acceptance with buyer reservation and confirmation with seller allocation in their respective local transactions. Authority receipts are assertions by trusted gateways, not proofs of honest accounting. Closure is an alternative terminal decision for the same revision; it allocates no inventory and permits release only after verification. These links express the proposed method, not a global atomic transaction.}
 \label{fig:method-evidence}
 \end{figure}
@@ -168,7 +168,7 @@ Local resource decisions and remote publication are separate operations. A durab
 
 Externally effective fulfilment or payment is authorised from durable confirmed state and carries an operation identifier containing the deal, revision and action. Downstream systems must suppress duplicates or expose an identifier that permits reconciliation. A2A task identifiers and repository replication alone do not establish exactly-once effects. Amendments refer to an existing commitment and require a new confirmed revision; fulfilment and settlement remain distinct from commitment.
 
-For multi-party operation, Murmur requires ownership-gated dispatch: each bridge acts only for agents operated by its organisation, although several bridges may observe the same public mention. This rule is proposed, not implemented in the sandbox, and does not by itself prevent duplicate dispatch by replicas within one organisation. Bridge high availability therefore requires a separate deduplication mechanism. For participants publishing at both public and private levels, the design uses a separate identity at each level. An approved public sub-request starts a new public thread rather than referencing its private parent; the orchestrator retains the correlation privately. Reconstruction is consequently limited by each participant's authorised view, rather than exposing a complete cross-level history.
+For multi-party operation, Talea requires ownership-gated dispatch: each bridge acts only for agents operated by its organisation, although several bridges may observe the same public mention. This rule is proposed, not implemented in the sandbox, and does not by itself prevent duplicate dispatch by replicas within one organisation. Bridge high availability therefore requires a separate deduplication mechanism. For participants publishing at both public and private levels, the design uses a separate identity at each level. An approved public sub-request starts a new public thread rather than referencing its private parent; the orchestrator retains the correlation privately. Reconstruction is consequently limited by each participant's authorised view, rather than exposing a complete cross-level history.
 
 Commercial records are exchanged through a restricted deal channel. Access enforcement must cover record reads, exports, blobs, relay streams and derived indexes, rather than only relay crawl selection. A counterparty authorised to read an offer is not necessarily authorised to read the private information used to construct it. We therefore separate a private planner from an outbound emissary and place a deterministic release interface between them, following the distinction between access and declassification~\citep{myers1997,robustdecl}. Neither agent holds unrestricted commercial signing authority.
 

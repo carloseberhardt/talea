@@ -1,11 +1,11 @@
 # Multi-Party Flow: One Query Across Three Stacks
 
 A concrete end-to-end trace of a single human query as it fans out across three
-independently-operated murmur stacks — combining a friend's **public** agent with
+independently-operated talea stacks — combining a friend's **public** agent with
 the user's own **private** agent — showing exactly which record lands on which
 PDS and who can see what at each hop.
 
-This is a *thought experiment / design target*, not a description of what murmur
+This is a *thought experiment / design target*, not a description of what talea
 does today. The "What this would require building" section at the end is honest
 about the gap. Where something is a security model rather than an atproto feature,
 it's flagged as such.
@@ -52,7 +52,7 @@ Each user's bridge/triage/AppView read **only their own relay**. So U1's "primar
 view" = all three public PDSes + only `U1-priv`. The public PDSes are symmetric;
 only the private one is singular — which is the whole trick.
 
-### Two load-bearing rules (neither exists in murmur yet)
+### Two load-bearing rules (neither exists in talea yet)
 
 1. **Ownership-gated dispatch.** A bridge only dispatches to agents *it owns*
    (the `ManagedByBridge` flag, today just forward-compat insurance). Bridge-1
@@ -274,7 +274,7 @@ single sentence in the writeup.
 
 ---
 
-## What murmur would need to build to make this real
+## What talea would need to build to make this real
 
 Roughly in dependency order:
 

@@ -1,6 +1,6 @@
-# Murmur: Reference Architecture and Near-Term Plan
+# Talea: Reference Architecture and Near-Term Plan
 
-This document captures two related things: a near-term plan for the next round of infrastructure changes (Bifrost as LLM gateway, Laminar for observability), and notes toward a reference architecture writeup for "auditable enterprise agent platforms" — the larger pattern that Murmur is an instance of.
+This document captures two related things: a near-term plan for the next round of infrastructure changes (Bifrost as LLM gateway, Laminar for observability), and notes toward a reference architecture writeup for "auditable enterprise agent platforms" — the larger pattern that Talea is an instance of.
 
 ## Near-term plan
 
@@ -12,7 +12,7 @@ This document captures two related things: a near-term plan for the next round o
 - **Built-in observability** at the LLM call boundary — Prometheus metrics, OTLP tracing, request logging with full prompts and responses. This is the immediate win: when triage makes a routing decision we don't understand, we can see exactly what prompt it sent and what came back.
 - **Failover, load balancing across keys, virtual keys with budgets.** Not needed today but free with the swap.
 - **Web UI for configuration** rather than YAML/JSON config files.
-- **Native MCP gateway capabilities** — interesting because of where Murmur is heading with agent tools, though not in scope for this swap.
+- **Native MCP gateway capabilities** — interesting because of where Talea is heading with agent tools, though not in scope for this swap.
 
 **What this is not:** Bifrost is not a replacement for AgentGateway's *agent registry / registration onramp* role. That role is deferred (see below). Bifrost is squarely an LLM gateway. The two roles being separable is exactly why we structured AgentGateway's use this way in the first place (decision #6 in the implementation doc).
 
@@ -80,7 +80,7 @@ We want both eventually. Laminar to debug agent behavior, Bifrost to manage LLM 
 
 ## Reference architecture: notes for the writeup
 
-What follows are notes toward a separate, more polished writeup: "A reference architecture for auditable enterprise agent platforms." Murmur is an instance of this pattern, but the pattern is bigger than Murmur and worth naming.
+What follows are notes toward a separate, more polished writeup: "A reference architecture for auditable enterprise agent platforms." Talea is an instance of this pattern, but the pattern is bigger than Talea and worth naming.
 
 ### The core insight
 
@@ -88,21 +88,21 @@ The agent infrastructure space is converging on a stable set of layer-roles, but
 
 ### The eight layers
 
-1. **Coordination substrate** — How agents and humans address and reach each other. The communication fabric. Today: A2A, MCP, custom protocols, message buses. In Murmur: atproto + the bridge.
+1. **Coordination substrate** — How agents and humans address and reach each other. The communication fabric. Today: A2A, MCP, custom protocols, message buses. In Talea: atproto + the bridge.
 
-2. **Identity and registration** — How agents get into the system and prove who they are. Today: agent cards, registries, OAuth-of-various-kinds, often ad-hoc. In Murmur: profile records on atproto + bridge-held credentials, with a future direction toward a registry-driven onramp.
+2. **Identity and registration** — How agents get into the system and prove who they are. Today: agent cards, registries, OAuth-of-various-kinds, often ad-hoc. In Talea: profile records on atproto + bridge-held credentials, with a future direction toward a registry-driven onramp.
 
-3. **Routing and dispatch** — Who handles a given request. Today: A2A clients, gateways, custom routers, ad-hoc orchestration code. In Murmur: bridge dispatch rules + triage agent.
+3. **Routing and dispatch** — Who handles a given request. Today: A2A clients, gateways, custom routers, ad-hoc orchestration code. In Talea: bridge dispatch rules + triage agent.
 
-4. **LLM gateway** — The model-call boundary. Provider abstraction, caching, failover, cost attribution. Today: Bifrost, LiteLLM, Portkey, AgentGateway-as-LLM-router. In Murmur: Bifrost (after the swap).
+4. **LLM gateway** — The model-call boundary. Provider abstraction, caching, failover, cost attribution. Today: Bifrost, LiteLLM, Portkey, AgentGateway-as-LLM-router. In Talea: Bifrost (after the swap).
 
-5. **Agent runtime / orchestration** — Where agent logic actually executes. Today: A2A SDKs, LangGraph, ADK, BeeAI, custom services. In Murmur: standalone Python A2A services per agent.
+5. **Agent runtime / orchestration** — Where agent logic actually executes. Today: A2A SDKs, LangGraph, ADK, BeeAI, custom services. In Talea: standalone Python A2A services per agent.
 
-6. **Observability and eval** — What the system did and whether it was right. Today: Laminar, Langfuse, AgentOps, LangSmith, Helicone. In Murmur: Laminar (after wiring in).
+6. **Observability and eval** — What the system did and whether it was right. Today: Laminar, Langfuse, AgentOps, LangSmith, Helicone. In Talea: Laminar (after wiring in).
 
-7. **Audit and provenance** — The durable, signed, tamper-evident record of what happened. Today: largely absent in other stacks; folded into observability if anything. In Murmur: structurally part of the coordination substrate via signed atproto records.
+7. **Audit and provenance** — The durable, signed, tamper-evident record of what happened. Today: largely absent in other stacks; folded into observability if anything. In Talea: structurally part of the coordination substrate via signed atproto records.
 
-8. **Tools and integrations** — What agents can do beyond chat. Today: MCP servers, function calling, framework tools. In Murmur: not yet exercised.
+8. **Tools and integrations** — What agents can do beyond chat. Today: MCP servers, function calling, framework tools. In Talea: not yet exercised.
 
 ### Why audit is its own layer
 
@@ -138,9 +138,9 @@ The layers without good alternatives are interesting:
 
 This is either a moat or evidence that the layer doesn't matter. The bet of this reference architecture is that it matters, and that we're early.
 
-### Where Murmur fits
+### Where Talea fits
 
-Murmur is one implementation of this reference architecture. The interesting properties:
+Talea is one implementation of this reference architecture. The interesting properties:
 
 - It uses atproto for both layer 1 (coordination) and layer 7 (audit). These are distinct layers conceptually, but atproto's design lets one substrate satisfy both. That's the key architectural move.
 - The bridge is the seam between layer 1 and layers 3-5. It speaks atproto on one side and A2A on the other, which is what lets agents stay protocol-naive.
@@ -156,7 +156,7 @@ When this becomes a real document (blog post, conference talk, internal IBM stra
 3. **Why audit is its own layer.** The argument above. This is the part most readers haven't seen articulated.
 4. **The reference architecture.** A diagram showing the layers, their interfaces, and example products at each.
 5. **Substitution patterns.** How to think about swapping at each layer without disrupting the others.
-6. **Murmur as a worked example.** Brief, concrete, showing how the pattern lands in practice. Include the package+weather thread as the canonical demonstration.
+6. **Talea as a worked example.** Brief, concrete, showing how the pattern lands in practice. Include the package+weather thread as the canonical demonstration.
 7. **Open questions.** Federation across enterprise boundaries. Multi-tenant access control. Bridge redundancy. Key custody at scale. The places where the architecture isn't yet proven.
 
 ### Audience considerations

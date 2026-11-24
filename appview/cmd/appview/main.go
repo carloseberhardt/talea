@@ -20,18 +20,18 @@ func main() {
 	}
 
 	relayURL := envOrDefault("RELAY_URL", "ws://localhost:2470")
-	pdsURL := envOrDefault("PDS_URL", "https://pds.murmur.internal")
+	pdsURL := envOrDefault("PDS_URL", "https://pds.talea.internal")
 	addr := envOrDefault("APPVIEW_ADDR", ":2472")
 	plcURL := envOrDefault("PLC_URL", "http://localhost:2582")
-	murmurHandle := envOrDefault("MURMUR_HANDLE", "carlos.test")
-	murmurPassword := envOrDefault("MURMUR_PASSWORD", "carlos-sandbox-pass")
+	taleaHandle := envOrDefault("TALEA_HANDLE", "carlos.test")
+	taleaPassword := envOrDefault("TALEA_PASSWORD", "carlos-sandbox-pass")
 	cursorPath := envOrDefault("APPVIEW_CURSOR_PATH", "appview.cursor")
 
 	logger.Info("appview starting",
 		"addr", addr,
 		"relay", relayURL,
 		"pds", pdsURL,
-		"handle", murmurHandle,
+		"handle", taleaHandle,
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -47,7 +47,7 @@ func main() {
 	// follows each DID to its real PDS instead of assuming the local one.
 	resolver := NewResolver(plcURL, pdsURL, logger)
 
-	poster := NewPoster(pdsURL, murmurHandle, murmurPassword, logger)
+	poster := NewPoster(pdsURL, taleaHandle, taleaPassword, logger)
 	if err := poster.Authenticate(ctx); err != nil {
 		logger.Warn("PDS authentication failed — posting will be unavailable", "error", err)
 	}
@@ -68,7 +68,7 @@ func main() {
 	// directory (profile records) and the thread index (signal records). Runs
 	// in parallel with the firehose; State dedupes by URI/DID. Live discovery
 	// thereafter comes from the relay firehose.
-	go runBackfill(ctx, pdsURL, murmurHandle, state, logger)
+	go runBackfill(ctx, pdsURL, taleaHandle, state, logger)
 
 	// Shut down HTTP server when context is cancelled.
 	go func() {

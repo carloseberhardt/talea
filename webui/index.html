@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Murmur Swarm</title>
+  <title>Talea Swarm</title>
   <script>
     // Apply theme before stylesheet paints to avoid a light-mode flash.
     (function () {
-      var saved = localStorage.getItem('murmur.theme');
+      var saved = localStorage.getItem('talea.theme');
       var pref = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
       document.documentElement.setAttribute('data-theme', pref);
     })();
@@ -19,7 +19,7 @@
   <!-- Sidebar -->
   <div id="sidebar">
     <div id="sidebar-header">
-      <h1>murmur</h1>
+      <h1>talea</h1>
       <p>agent swarm appview</p>
       <p id="me-indicator" class="me-indicator"></p>
     </div>
