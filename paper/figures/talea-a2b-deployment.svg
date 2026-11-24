@@ -1,52 +1,52 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="183mm" height="112.88888888888889mm" viewBox="0 0 519 320">
 <rect x="0" y="0" width="519" height="320" fill="white" stroke="white" stroke-width="0.65"/>
 <rect x="10" y="10" width="170" height="301" fill="white" stroke="#81909e" stroke-width="0.65"/>
-<text x="95" y="27" font-family="Helvetica,Arial,sans-serif" font-size="11" fill="#202a35" text-anchor="middle">Buyer organisation</text>
+<text x="95" y="27" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="11" fill="#202a35" text-anchor="middle">Buyer organisation</text>
 <g id="Buyer organisation-planner">
 <rect x="20" y="42" width="150" height="43" fill="white" stroke="#81909e" stroke-width="0.65"/>
-<text x="95.0" y="60.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Private planner</text>
-<text x="95.0" y="73.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">No signing keys</text>
+<text x="95.0" y="60.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Private planner</text>
+<text x="95.0" y="73.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">No signing keys</text>
 </g>
 <g id="Buyer organisation-gateway">
 <rect x="20" y="112" width="150" height="59" fill="#ffeccc" stroke="#81909e" stroke-width="0.65"/>
-<text x="95.0" y="131.8" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Policy gateway</text>
-<text x="95.0" y="144.8" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Release checks</text>
-<text x="95.0" y="157.8" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Budget ledger / outbox</text>
+<text x="95.0" y="131.8" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Policy gateway</text>
+<text x="95.0" y="144.8" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Release checks</text>
+<text x="95.0" y="157.8" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Budget ledger / outbox</text>
 </g>
 <g id="Buyer organisation-deal">
 <rect x="20" y="202" width="150" height="43" fill="#ffeccc" stroke="#81909e" stroke-width="0.65"/>
-<text x="95.0" y="220.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Deal PDS</text>
-<text x="95.0" y="233.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Retained evidence</text>
+<text x="95.0" y="220.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Deal PDS</text>
+<text x="95.0" y="233.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Retained evidence</text>
 </g>
 <g id="Buyer organisation-public">
 <rect x="20" y="269" width="150" height="29" fill="#dae8fc" stroke="#81909e" stroke-width="0.65"/>
-<text x="95.0" y="286.8" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Public profiles</text>
+<text x="95.0" y="286.8" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Public profiles</text>
 </g>
 <polyline points="95,85 95,112" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="97.0,108.0 95,112 93.0,108.0" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="95,171 95,202" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="97.0,198.0 95,202 93.0,198.0" fill="none" stroke="#596979" stroke-width="0.9"/>
 <rect x="339" y="10" width="170" height="301" fill="white" stroke="#81909e" stroke-width="0.65"/>
-<text x="424" y="27" font-family="Helvetica,Arial,sans-serif" font-size="11" fill="#202a35" text-anchor="middle">Seller organisation</text>
+<text x="424" y="27" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="11" fill="#202a35" text-anchor="middle">Seller organisation</text>
 <g id="Seller organisation-planner">
 <rect x="349" y="42" width="150" height="43" fill="white" stroke="#81909e" stroke-width="0.65"/>
-<text x="424.0" y="60.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Private planner</text>
-<text x="424.0" y="73.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">No signing keys</text>
+<text x="424.0" y="60.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Private planner</text>
+<text x="424.0" y="73.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">No signing keys</text>
 </g>
 <g id="Seller organisation-gateway">
 <rect x="349" y="112" width="150" height="59" fill="#ffeccc" stroke="#81909e" stroke-width="0.65"/>
-<text x="424.0" y="131.8" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Policy gateway</text>
-<text x="424.0" y="144.8" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Release checks</text>
-<text x="424.0" y="157.8" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Inventory ledger / outbox</text>
+<text x="424.0" y="131.8" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Policy gateway</text>
+<text x="424.0" y="144.8" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Release checks</text>
+<text x="424.0" y="157.8" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Inventory ledger / outbox</text>
 </g>
 <g id="Seller organisation-deal">
 <rect x="349" y="202" width="150" height="43" fill="#ffeccc" stroke="#81909e" stroke-width="0.65"/>
-<text x="424.0" y="220.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Deal PDS</text>
-<text x="424.0" y="233.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Retained evidence</text>
+<text x="424.0" y="220.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Deal PDS</text>
+<text x="424.0" y="233.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Retained evidence</text>
 </g>
 <g id="Seller organisation-public">
 <rect x="349" y="269" width="150" height="29" fill="#dae8fc" stroke="#81909e" stroke-width="0.65"/>
-<text x="424.0" y="286.8" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Public profiles</text>
+<text x="424.0" y="286.8" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Public profiles</text>
 </g>
 <polyline points="424,85 424,112" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="426.0,108.0 424,112 422.0,108.0" fill="none" stroke="#596979" stroke-width="0.9"/>
@@ -54,12 +54,12 @@
 <polyline points="426.0,198.0 424,202 422.0,198.0" fill="none" stroke="#596979" stroke-width="0.9"/>
 <g id="restricted">
 <rect x="205" y="202" width="109" height="43" fill="#ffeccc" stroke="#81909e" stroke-width="0.65"/>
-<text x="259.5" y="220.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Restricted</text>
-<text x="259.5" y="233.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">deal relays</text>
+<text x="259.5" y="220.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Restricted</text>
+<text x="259.5" y="233.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">deal relays</text>
 </g>
 <g id="public">
 <rect x="205" y="269" width="109" height="29" fill="#dae8fc" stroke="#81909e" stroke-width="0.65"/>
-<text x="259.5" y="286.8" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Public relays</text>
+<text x="259.5" y="286.8" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Public relays</text>
 </g>
 <polyline points="170,225 205,225" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="201.0,223.0 205,225 201.0,227.0" fill="none" stroke="#596979" stroke-width="0.9"/>
@@ -69,11 +69,11 @@
 <polyline points="174.0,142.0 170,140 174.0,138.0" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="314,213 329,213 329,140 349,140" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="345.0,138.0 349,140 345.0,142.0" fill="none" stroke="#596979" stroke-width="0.9"/>
-<text x="259" y="170" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Observe and</text>
-<text x="259" y="183" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">verify records</text>
+<text x="259" y="170" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Observe and</text>
+<text x="259" y="183" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">verify records</text>
 <polyline points="170,283 205,283" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="201.0,281.0 205,283 201.0,285.0" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="349,283 314,283" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="318.0,285.0 314,283 318.0,281.0" fill="none" stroke="#596979" stroke-width="0.9"/>
-<text x="259" y="258" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Discovery</text>
+<text x="259" y="258" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Discovery</text>
 </svg>

@@ -1,0 +1,14 @@
+/build/
+/.venv/
+__pycache__/
+*.pyc
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.xdv
+.DS_Store

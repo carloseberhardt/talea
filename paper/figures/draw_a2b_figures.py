@@ -2,19 +2,21 @@ from pathlib import Path
 from html import escape
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase.pdfmetrics import stringWidth
+from figure_style import FONT_NAME
 out=Path(__file__).resolve().parent;W=519
 class Figure:
  def __init__(self,name,h):
-  self.name=name;self.h=h;self.c=canvas.Canvas(str(out/(name+'.pdf')),pagesize=(W,h));self.s=[f'<svg xmlns="http://www.w3.org/2000/svg" width="183mm" height="{h*25.4/72}mm" viewBox="0 0 519 {h}">'];self.rect(0,0,W,h,'white','white')
+  self.name=name;self.h=h;self.c=canvas.Canvas(str(out/(name+'.pdf')),pagesize=(W,h),initialFontName=FONT_NAME,invariant=1);self.s=[f'<svg xmlns="http://www.w3.org/2000/svg" width="183mm" height="{h*25.4/72}mm" viewBox="0 0 519 {h}">'];self.rect(0,0,W,h,'white','white')
  def rect(self,x,y,w,h,fill='white',stroke='#81909e'):
   c=self.c;c.setFillColor(fill);c.setStrokeColor(stroke);c.setLineWidth(.65);c.setDash();c.rect(x,self.h-y-h,w,h,fill=1,stroke=1);self.s.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{fill}" stroke="{stroke}" stroke-width="0.65"/>')
  def text(self,x,y,t,size=10):
-  c=self.c;c.setFont('Helvetica',size);c.setFillColor('#202a35');c.drawCentredString(x,self.h-y,t);self.s.append(f'<text x="{x}" y="{y}" font-family="Helvetica,Arial,sans-serif" font-size="{size}" fill="#202a35" text-anchor="middle">{escape(t)}</text>')
+  c=self.c;c.setFont(FONT_NAME,size);c.setFillColor('#202a35');c.drawCentredString(x,self.h-y,t);self.s.append(f'<text x="{x}" y="{y}" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="{size}" fill="#202a35" text-anchor="middle">{escape(t)}</text>')
  def box(self,id,x,y,w,h,lines,fill='#ffeccc'):
   self.s.append(f'<g id="{id}">');self.rect(x,y,w,h,fill);top=y+h/2-(len(lines)-1)*6.5+3.3
+  size=min(10, min((w-8)*10/stringWidth(t,FONT_NAME,10) for t in lines))
+  assert size >= 8.5, (lines,w,size)
   for i,t in enumerate(lines):
-   assert stringWidth(t,'Helvetica',10)<w-8,(t,w)
-   self.text(x+w/2,top+i*13,t)
+   self.text(x+w/2,top+i*13,t,size)
   self.s.append('</g>')
  def line(self,pts,dash=False,arrow=True):
   c=self.c;c.setStrokeColor('#596979');c.setLineWidth(.9);c.setDash(2,3) if dash else c.setDash();p=c.beginPath();p.moveTo(pts[0][0],self.h-pts[0][1])
@@ -41,7 +43,7 @@ f.line([(310,45),(310,30),(196,30),(196,125)]);f.text(238,63,'Routing record')
 f.line([(440,173),(440,236)]);f.text(418,208,'Task')
 f.line([(484,236),(484,173)]);f.text(495,208,'Result')
 f.line([(409,158),(397,158),(397,299),(196,299),(196,173)])
-f.text(279,290,'Response / sub-request publication')
+f.text(297,290,'Response / sub-request publication',9)
 f.save()
 f=Figure('talea-a2b-deployment',320)
 for x,label,resource in [(10,'Buyer organisation','Budget ledger'),(339,'Seller organisation','Inventory ledger')]:
@@ -94,7 +96,7 @@ def msg(a,b,y,lines):
  f.line([(xs[a],y),(xs[b],y)])
  mid=(xs[a]+xs[b])/2
  for i,t in enumerate(lines):
-  width=stringWidth(t,'Helvetica',10)+8;yy=y-7-(len(lines)-1-i)*13
+  width=stringWidth(t,FONT_NAME,10)+8;yy=y-7-(len(lines)-1-i)*13
   f.rect(mid-width/2,yy-10,width,12,'white','white');f.text(mid,yy,t)
 def local(x,y,lines):f.box('local-'+str(y),x-79,y,158,43,lines)
 msg(0,1,120,['1  Approved work order'])

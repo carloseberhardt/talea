@@ -2,8 +2,9 @@ from pathlib import Path
 from html import escape
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase.pdfmetrics import stringWidth
+from figure_style import FONT_NAME
 out=Path(__file__).resolve().parent; W,H=518.74,340
-c=canvas.Canvas(str(out/'a2b-evidence-gap.pdf'),pagesize=(W,H))
+c=canvas.Canvas(str(out/'a2b-evidence-gap.pdf'),pagesize=(W,H),initialFontName=FONT_NAME,invariant=1)
 c.setFillColor('#ffffff'); c.rect(0,0,W,H,fill=1,stroke=0)
 svg=[f'<svg xmlns="http://www.w3.org/2000/svg" width="183mm" height="119.94mm" viewBox="0 0 {W} {H}">','<rect width="518.74" height="340" fill="white"/>']
 def line(points,color='#6b7280',dash=False,arrow=False):
@@ -17,14 +18,14 @@ def line(points,color='#6b7280',dash=False,arrow=False):
   a=(x-4*dx+2*dy,y-4*dy-2*dx);b=(x-4*dx-2*dy,y-4*dy+2*dx)
   line([a,(x,y),b],color)
 def text(x,y,s,size=10,color='#202a35',center=True):
- c.setFillColor(color);c.setFont('Helvetica',size)
+ c.setFillColor(color);c.setFont(FONT_NAME,size)
  (c.drawCentredString if center else c.drawString)(x,H-y,s)
- svg.append(f'<text x="{x}" y="{y}" font-family="Helvetica,Arial,sans-serif" font-size="{size}" fill="{color}" text-anchor="'+('middle' if center else 'start')+'">'+escape(s)+'</text>')
+ svg.append(f'<text x="{x}" y="{y}" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="{size}" fill="{color}" text-anchor="'+('middle' if center else 'start')+'">'+escape(s)+'</text>')
 def rect(x,y,w,h,fill='#f4f5f6',stroke='#b4bbc4'):
  c.setFillColor(fill);c.setStrokeColor(stroke);c.setLineWidth(.65);c.setDash();c.rect(x,H-y-h,w,h,fill=1,stroke=1)
  svg.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{fill}" stroke="{stroke}" stroke-width="0.65"/>')
 def box(id,x,y,w,h,label):
- assert stringWidth(label,'Helvetica',10)<w-10
+ assert stringWidth(label,FONT_NAME,10)<w-10
  svg.append(f'<g id="{id}">');rect(x,y,w,h,'#ffeccc' if id in ('inventory','authority','funds') else '#dae8fc');text(x+w/2,y+h/2+3.5,label);svg.append('</g>')
 
 for x,w,title in [(8,149,'Supplier'),(176,156,'Compliance service'),(351,159,'Buyer')]:

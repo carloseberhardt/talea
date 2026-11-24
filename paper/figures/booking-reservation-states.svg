@@ -2,36 +2,36 @@
 <rect x="0" y="0" width="519" height="270" fill="white" stroke="white" stroke-width="0.65"/>
 <g id="none">
 <rect x="10" y="105" width="123" height="45" fill="white" stroke="#81909e" stroke-width="0.65"/>
-<text x="71.5" y="124.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Not accepted</text>
-<text x="71.5" y="137.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">No reservation</text>
+<text x="71.5" y="124.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Not accepted</text>
+<text x="71.5" y="137.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">No reservation</text>
 </g>
 <g id="pending">
 <rect x="190" y="105" width="143" height="45" fill="#ffeccc" stroke="#81909e" stroke-width="0.65"/>
-<text x="261.5" y="124.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Awaiting outcome</text>
-<text x="261.5" y="137.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">AED 72,000 reserved</text>
+<text x="261.5" y="124.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Awaiting outcome</text>
+<text x="261.5" y="137.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">AED 72,000 reserved</text>
 </g>
 <g id="confirmed">
 <rect x="380" y="48" width="129" height="45" fill="#dae8fc" stroke="#81909e" stroke-width="0.65"/>
-<text x="444.5" y="60.8" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Confirmed</text>
-<text x="444.5" y="73.8" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">AED 72,000</text>
-<text x="444.5" y="86.8" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">committed</text>
+<text x="444.5" y="60.8" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Confirmed</text>
+<text x="444.5" y="73.8" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">AED 72,000</text>
+<text x="444.5" y="86.8" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">committed</text>
 </g>
 <g id="closed">
 <rect x="380" y="194" width="129" height="45" fill="white" stroke="#81909e" stroke-width="0.65"/>
-<text x="444.5" y="213.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Closed</text>
-<text x="444.5" y="226.3" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Reservation released</text>
+<text x="444.5" y="213.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Closed</text>
+<text x="444.5" y="226.3" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Reservation released</text>
 </g>
 <polyline points="133,127 190,127" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="186.0,125.0 190,127 186.0,129.0" fill="none" stroke="#596979" stroke-width="0.9"/>
-<text x="160" y="101" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Atomic</text>
-<text x="160" y="114" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">acceptance</text>
+<text x="160" y="101" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Atomic</text>
+<text x="160" y="114" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">acceptance</text>
 <polyline points="333,117 355,117 355,70 380,70" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="376.0,68.0 380,70 376.0,72.0" fill="none" stroke="#596979" stroke-width="0.9"/>
-<text x="366" y="32" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Verified confirmation</text>
+<text x="366" y="32" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Verified confirmation</text>
 <polyline points="333,138 355,138 355,216 380,216" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="376.0,214.0 380,216 376.0,218.0" fill="none" stroke="#596979" stroke-width="0.9"/>
-<text x="438" y="257" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Verified closure</text>
+<text x="438" y="257" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Verified closure</text>
 <polyline points="235,105 235,64 287,64 287,105" fill="none" stroke="#596979" stroke-width="0.9"/>
 <polyline points="289.0,101.0 287,105 285.0,101.0" fill="none" stroke="#596979" stroke-width="0.9"/>
-<text x="244" y="47" font-family="Helvetica,Arial,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Timeout: retain funds</text>
+<text x="244" y="47" font-family="Bitstream Vera Sans,DejaVu Sans,sans-serif" font-size="10" fill="#202a35" text-anchor="middle">Timeout: retain funds</text>
 </svg>

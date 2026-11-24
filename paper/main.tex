@@ -1,6 +1,9 @@
+% Figures are supplied as PDF; arXiv needs no external format conversion.
+\newcommand{\DoNotLoadEpstopdf}{}
 \documentclass[10pt]{article}
 
 \usepackage{arxiv}
+\usepackage{iftex}
 \usepackage[T1]{fontenc}
 \usepackage{mathptmx}
 \usepackage[scaled=0.92]{helvet}
@@ -16,13 +19,22 @@
 \usepackage{xcolor}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc,shapes.geometric}
-% algorithm2e.sty ships Latin-1 bytes; Tectonic/XeTeX expects UTF-8.
-\XeTeXdefaultencoding "latin1"
+% Some algorithm2e releases contain Latin-1 comments. Keep the XeTeX
+% workaround conditional so the same source also compiles with PDFLaTeX.
+\ifXeTeX\XeTeXdefaultencoding "latin1"\fi
 \usepackage[ruled,vlined,linesnumbered]{algorithm2e}
-\XeTeXdefaultencoding "utf8"
+\ifXeTeX\XeTeXdefaultencoding "utf8"\fi
 \usepackage[numbers,sort&compress]{natbib}
 \usepackage{xurl}
 \usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\hypersetup{
+  pdftitle={From Conversations to Commitments: A Design Study of Shared Records for Agent-to-Business Coordination},
+  pdfauthor={Carlos Eberhardt and Mansura Habiba},
+  pdfsubject={Shared records, commercial confidentiality and agent-to-business coordination},
+  pdfkeywords={Agent-to-business commerce, AT Protocol, delegated authority, distributed commitment, information-flow control, multi-agent systems},
+  pdfdisplaydoctitle=true,
+  bookmarksnumbered=true
+}
 \usepackage[capitalise,noabbrev]{cleveref}
 \usepackage{caption}
 \captionsetup{font=small,labelfont=bf}
@@ -91,15 +103,18 @@
 \renewcommand{\shorttitle}{From Conversations to Commitments}
 \renewcommand{\undertitle}{A Preprint}
 
-% TODO(authors): confirm affiliations and email addresses.
 \author{%
-  Carlos Eberhardt\\
-  \textit{[Affiliation]}\\
-  \texttt{[email]}
+  \textbf{Carlos Eberhardt}\\
+  Technical Product Management\\
+  IBM Software\\
+  Rochester, United States of America\\
+  \texttt{carlos.eberhardt@gmail.com}
   \And
-  Mansura Habiba\\
-  \textit{[Affiliation]}\\
-  \texttt{[email]}
+  \href{https://orcid.org/0000-0001-9051-1370}{\textcolor{black}{\includegraphics[scale=0.06]{figures/orcid.pdf}\hspace{1mm}\textbf{Mansura Habiba}}}\\
+  Principal Platform Architect\\
+  IBM Software\\
+  Dublin, Ireland\\
+  \texttt{mansurah.habiba@gmail.com}
 }
 
 \date{November 2026}
@@ -108,7 +123,7 @@
 \maketitle
 
 \begin{abstract}
-Agents can exchange proposals and delegate tasks, but a business commitment requires more than a successful conversation. The accepted terms must be connected to delegated authority, reserved resources and evidence that survives changes in participants and execution state. We ask where a shared, attributable record of the interaction helps with this across independently operated organisations, and where it does not. To find out we built Talea, a coordination layer that carries agent conversations as signed AT Protocol records and executes tasks over A2A, and used it as the instrument for a design study of an airline booking accommodation for disrupted passengers from several hotels. Four results follow. A protocol built for federated social media supplies five of six requirements for cross-organisational commercial coordination as stock infrastructure; the sixth, controlled release, is absent and reshapes everything built above it. Under commercial confidentiality between competing suppliers the shared record converges on pairwise channels for every party except the hub that holds their union, whatever substrate carries it. The substrate's advantage does not vanish but moves inside the hub's trust boundary, where participants change and the planner's memory is not the record. And a deterministic release interface between a private planner and an outbound emissary covers fixed-value disclosure and stops where adaptive negotiation begins, because a counter-offer price is a function of private state. The sandbox and finite-model checks establish that the composition works and that admission and reservation rules are necessary; they do not measure a benefit. What remains open is a narrower hypothesis: that inside one trust boundary, a shared record improves decision reconstruction and recovery for late-joining participants over point-to-point exchange with equivalent controls. We state the experiment that would decide it.
+Business commitments require accepted terms to be linked to delegated authority, reserved resources and durable evidence. We examine how a shared, attributable interaction record can support these links across independently operated organisations. Talea combines signed AT Protocol records with A2A task execution. We use its coordination sandbox and a proposed commercial extension in a design study of an airline booking disrupted passengers into three competing hotels. Four observations follow. First, AT Protocol provides mechanisms supporting five of six coordination requirements, while record-level access and release controls require additional enforcement. Second, the case's confidentiality constraints restrict each hotel's authorised view to its bilateral exchange; only the airline can correlate all three deals. Third, this leaves a possible benefit for late-joining participants inside the airline's trust boundary, but does not establish an advantage over an equally instrumented point-to-point design. Fourth, a deterministic release interface constrains fixed, approved payloads but cannot bound disclosure when negotiated values depend on private state. Finite-model explorations and deterministic interface checks reproduce the specified behaviours and counterexamples when selected controls are removed. They do not measure comparative benefit or validate a deployed commercial system. The remaining hypothesis is that, within one trust boundary, shared records improve decision reconstruction and recovery under changing participation relative to point-to-point exchange with equivalent authority, reservation, retention and correlation evidence. We specify an experiment to test it.
 \end{abstract}
 
 \keywords{Agent-to-business commerce $\cdot$ AT Protocol $\cdot$ Delegated authority $\cdot$ Distributed commitment $\cdot$ Information-flow control $\cdot$ Multi-agent systems}
@@ -122,7 +137,7 @@ Agents can exchange proposals and delegate tasks, but a business commitment requ
 \input{discussion}
 
 \section*{Code and evidence availability}
-The coordination implementation, the sandbox deployment configuration, the finite model, the interface fixtures and their recorded results are at \url{https://github.com/carloseberhardt/talea}. The model and fixtures are \texttt{protocol\_model.py} and \texttt{boundary\_checks.py} in the \texttt{paper} directory. The restart exercise is described in that repository's \texttt{IMPLEMENTATION.md}. No business transaction data or participant data were used.
+The finite model (\texttt{protocol\_model.py}), deterministic interface fixtures (\texttt{boundary\_checks.py}), recorded JSON results and reproduction instructions accompany this submission as ancillary files. Both scripts use only the Python standard library; running them regenerates the reported results. These files reproduce the abstract model and interface checks, not the coordination sandbox or a deployed commercial system. The project repository is \url{https://github.com/carloseberhardt/talea/}; access to that repository is not required to reproduce the archived checks. The sandbox restart exercise is an author-reported observation documented in the project's \texttt{IMPLEMENTATION.md}; the complete sandbox is not included in the ancillary package. No business transaction data or participant data were used.
 
 \section*{Use of AI assistance}
 The authors used AI coding and writing assistants in building the sandbox and in drafting, editing and reviewing this manuscript. The authors reviewed all content and are responsible for it.
@@ -130,6 +145,7 @@ The authors used AI coding and writing assistants in building the sandbox and in
 \bibliographystyle{unsrtnat}
 \bibliography{references}
 
+\clearpage
 \appendix
 \input{appendix}
 \end{document}
